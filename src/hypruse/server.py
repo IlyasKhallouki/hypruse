@@ -9,6 +9,7 @@ the same space cursorpos, window `at`, and movecursor use.
 
 from __future__ import annotations
 
+import contextlib
 import json
 import os
 import re
@@ -32,6 +33,13 @@ def _runtime_dir() -> Path:
     d = Path(base) / "hypruse"
     d.mkdir(parents=True, exist_ok=True)
     return d
+
+
+def _prune_shots(d: Path, keep: int = 20) -> None:
+    """XDG_RUNTIME_DIR is tmpfs (RAM) — cap stored captures to the newest N."""
+    for old in sorted(d.glob("shot-*.png"))[:-keep]:
+        with contextlib.suppress(OSError):
+            old.unlink()
 
 
 @mcp.tool()
@@ -65,8 +73,10 @@ def screenshot(window: str = "", region: str = "") -> list[Any]:
     png, meta = shot.capture(window, region)
     if os.environ.get("HYPRUSE_SCREENSHOT_MODE", "file") == "image":
         return [MCPImage(data=png, format="png"), json.dumps(meta)]
-    path = _runtime_dir() / f"shot-{int(time.time() * 1000)}.png"
+    d = _runtime_dir()
+    path = d / f"shot-{int(time.time() * 1000)}.png"
     path.write_bytes(png)
+    _prune_shots(d)
     return [f"screenshot written to {path} — read that file to view it", json.dumps(meta)]
 
 
