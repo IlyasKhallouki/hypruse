@@ -22,7 +22,7 @@ from typing import Any
 from mcp.server.fastmcp import FastMCP
 from mcp.types import ImageContent, TextContent
 
-from hypruse import __version__, hyprctl, safety, session
+from hypruse import __version__, events, hyprctl, safety, session
 from hypruse import input as hinput
 from hypruse import screenshot as shot
 
@@ -216,6 +216,7 @@ def hypr(action: str, target: str = "", workspace: str = "") -> str:
 
 
 def _await_new_window(before: set[str], wait_s: float) -> dict[str, Any] | None:
+    """Polling fallback when the event socket is unavailable."""
     deadline = time.monotonic() + wait_s
     while time.monotonic() < deadline:
         time.sleep(0.15)
@@ -223,6 +224,36 @@ def _await_new_window(before: set[str], wait_s: float) -> dict[str, Any] | None:
             if c["address"] not in before:
                 return c
     return None
+
+
+def _client_by_address(address: str) -> dict[str, Any] | None:
+    return next((c for c in hyprctl.query("clients") if c["address"] == address), None)
+
+
+def _launch_and_wait(rule_command: str, wait_s: float) -> dict[str, Any] | None:
+    """Dispatch exec and return the new window's client record.
+
+    Preferred path: subscribe to the event socket BEFORE dispatching, then
+    block on the openwindow event (no race, no polling). Falls back to
+    clients-diff polling if socket2 is unreachable.
+    """
+    try:
+        stream = events.EventStream()
+    except events.EventError:
+        before = {c["address"] for c in hyprctl.query("clients")}
+        hyprctl.dispatch("exec", rule_command)
+        return _await_new_window(before, wait_s)
+    with stream:
+        hyprctl.dispatch("exec", rule_command)
+        hit = stream.wait_for({"openwindow"}, None, wait_s)
+    if hit is None:
+        return None
+    address = hit[1]["address"]
+    win = _client_by_address(address)
+    if win is None:
+        time.sleep(0.1)  # event can beat hyprctl's client list by a beat
+        win = _client_by_address(address)
+    return win
 
 
 @mcp.tool()
@@ -234,10 +265,8 @@ def launch(command: str, workspace: str = "", wait_s: float = 8.0) -> dict[str, 
     address/class/title/workspace, or a timeout note."""
     safety.touch("launch")
     wait_s = min(max(wait_s, 1.0), 30.0)
-    before = {c["address"] for c in hyprctl.query("clients")}
     rule = f"[workspace {workspace} silent] " if workspace else ""
-    hyprctl.dispatch("exec", rule + command)
-    win = _await_new_window(before, wait_s)
+    win = _launch_and_wait(rule + command, wait_s)
     if win is None:
         return (
             f"launched, but no new window appeared within {wait_s:.0f}s, slow or "
@@ -275,6 +304,45 @@ Register it with Claude Code:
 Or set `uvx hypruse` as a stdio server in your MCP client's config.
 Check the install with:  hypruse --version
 """
+
+
+_WAIT_EVENTS = {
+    "window_open": {"openwindow"},
+    "window_close": {"closewindow"},
+    "workspace": {"workspace"},
+    "title_change": {"windowtitlev2", "windowtitle"},
+}
+
+
+@mcp.tool()
+def wait_for(event: str, match: str = "", timeout_s: float = 10) -> dict[str, Any] | str:
+    """Block until a desktop event happens (real compositor events, not
+    polling). event: 'window_open' | 'window_close' | 'workspace' |
+    'title_change'. match: optional case-insensitive substring filter over
+    the event's fields (class/title/workspace name/address). timeout_s
+    1-60, default 10. Returns the event payload, or a timeout note. Use it
+    after actions with delayed effects: app startups, page loads that
+    change a window title."""
+    names = _WAIT_EVENTS.get(event)
+    if names is None:
+        raise ValueError(f"unknown event {event!r}: {'|'.join(_WAIT_EVENTS)}")
+    safety.touch(f"wait_for:{event}")
+    timeout_s = min(max(timeout_s, 1.0), 60.0)
+    needle = match.lower()
+
+    def matcher(_name: str, payload: dict[str, Any]) -> bool:
+        if not needle:
+            return True
+        return needle in " ".join(str(v) for v in payload.values()).lower()
+
+    try:
+        with events.EventStream() as stream:
+            hit = stream.wait_for(names, matcher, timeout_s)
+    except events.EventError as exc:
+        return f"event socket unavailable: {exc}"
+    if hit is None:
+        return f"timeout: no matching {event} event within {timeout_s:.0f}s"
+    return {"event": hit[0], **hit[1]}
 
 
 def main() -> None:
