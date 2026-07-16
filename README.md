@@ -28,7 +28,7 @@ hypruse
    └── raw Wayland wire ··▶ click & scroll (zwlr_virtual_pointer_v1)
 ```
 
-Design choices, defended:
+Design decisions:
 
 - **No ydotool / uinput.** That path needs a daemon, udev rules or root, and types US scancodes that break on other layouts. hypruse is just another Wayland client of your compositor, same standing as `wlrctl`.
 - **No portals.** `xdg-desktop-portal-hyprland` does not implement the RemoteDesktop portal (InputCapture is capture, not injection), so anything built on libei/portals silently degrades on Hyprland. hypruse doesn't try.
@@ -86,7 +86,7 @@ Two Desktop-specific notes: use `image` mode (Desktop renders inline MCP images 
 Read this section before installing. **hypruse hands an agent your mouse, your keyboard, your screen contents, and an app launcher.** The layers that keep that sane:
 
 1. **Approval:** MCP clients gate tool calls. In Claude Code, allowlist the read-only tools (`desktop`, `screenshot`) and leave `pointer`/`keyboard`/`hypr`/`launch` on ask-first until you trust a workflow.
-2. **Visibility:** the server maintains an activity beacon (`$XDG_RUNTIME_DIR/hypruse/state.json`); the shipped [Waybar module](waybar/) is invisible when idle and shows 󰚩 while an agent has hands on your desktop.
+2. **Visibility:** the server maintains an activity beacon (`$XDG_RUNTIME_DIR/hypruse/state.json`); the shipped [Waybar module](waybar/) is invisible when idle and shows a robot indicator while an agent has hands on your desktop.
 3. **Interruption:** click the indicator, or bind a panic key: `bind = SUPER SHIFT, BackSpace, exec, pkill -f hypruse`. Killing it mid-action is safe: button press/release pairs never span tool calls, so it cannot die holding a button.
 4. **The seat is shared.** There is one cursor and one keyboard focus, and Hyprland's focus-follows-mouse means a cursor move alone can retarget keystrokes. Don't type while an agent is driving; watch the indicator.
 5. **Scope:** stdio only (no network listener), no clipboard access, nothing persisted except the beacon. A screenshot sees everything visible: treat an agent session like screen sharing.
@@ -118,7 +118,7 @@ Everything speaks Hyprland's global logical coordinates, the space `hyprctl curs
 
 In image mode, captures automatically fit the host's result-size limit (Claude Desktop caps tool results at 1 MB): format degrades before resolution (native PNG, then full-res JPEG, then stepped downscale) because full-res JPEG reads UI text better than half-res PNG. The applied scale is folded into the returned metadata, so coordinate mapping stays exact; tune with `HYPRUSE_MAX_IMAGE_BYTES`, or pass `scale` for a deliberate zoom-out.
 
-By default the screenshot tool writes a PNG under `$XDG_RUNTIME_DIR/hypruse/` and returns its path; MCP hosts with a file reader (Claude Code's `Read`) render it natively. This default exists because some hosts (Claude Code ≤ 2.1.x among them) serialize inline MCP image blocks to base64 *text* the model can't see; we verified this empirically rather than trusting the spec. `HYPRUSE_SCREENSHOT_MODE=image` switches to inline image content blocks for hosts that render them correctly.
+By default the screenshot tool writes a PNG under `$XDG_RUNTIME_DIR/hypruse/` and returns its path; MCP hosts with a file reader (Claude Code's `Read`) render it natively. This default exists because some hosts (including Claude Code 2.1.x) serialize inline MCP image blocks to base64 text the model cannot see. `HYPRUSE_SCREENSHOT_MODE=image` switches to inline image content blocks for hosts that render them correctly.
 
 ## Development
 
@@ -142,14 +142,14 @@ The input e2e is deliberately manual: it borrows your cursor and keyboard, count
 - Clipboard integration, wait-for-stable capture, discrete-axis scroll
 - Multi-monitor and fractional-scaling hardening
 
-## Alternatives, honestly
+## Related projects
 
-| project | approach | where it falls short on Hyprland |
+| project | approach | on Hyprland |
 |---|---|---|
-| computer-use-linux | AT-SPI + portals, ydotool fallback | GNOME-first; RemoteDesktop portal is dead on Hyprland, screenshots portal-first |
-| hyprmcp | hyprctl wrapper | no screenshots, no input |
-| wayland-mcp (×2) | setuid evemu + bundled VLM | archived / stale; evemu needs elevated setup |
-| Anthropic computer-use-demo | X11 + xdotool in Docker | a sandboxed demo, not your desktop |
+| computer-use-linux | AT-SPI + portals, ydotool fallback | GNOME-first; the RemoteDesktop portal it prefers is not implemented by xdg-desktop-portal-hyprland |
+| hyprmcp | hyprctl wrapper | window management only; no screenshots or input |
+| wayland-mcp | evemu input, VLM analysis | requires elevated setup for input; no Hyprland semantics |
+| Anthropic computer-use-demo | X11 + xdotool in Docker | a sandboxed reference environment rather than a live desktop |
 
 ## License
 
