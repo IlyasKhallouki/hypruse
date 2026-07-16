@@ -20,7 +20,7 @@ from typing import Any
 from mcp.server.fastmcp import FastMCP
 from mcp.server.fastmcp import Image as MCPImage
 
-from hypruse import __version__, hyprctl
+from hypruse import __version__, hyprctl, safety
 from hypruse import input as hinput
 from hypruse import screenshot as shot
 
@@ -61,6 +61,7 @@ def screenshot(window: str = "", region: str = "") -> list[Any]:
     global = geometry[:2] + pixel / scale (scale is 1.0 unless the monitor
     uses fractional scaling).
     """
+    safety.touch("screenshot")
     png, meta = shot.capture(window, region)
     if os.environ.get("HYPRUSE_SCREENSHOT_MODE", "image") == "file":
         path = _runtime_dir() / f"shot-{int(time.time() * 1000)}.png"
@@ -94,6 +95,7 @@ def pointer(
     prefer `hypr`/`launch` for window management, keep pointer use inside
     application windows, and finish what you start.
     """
+    safety.touch(f"pointer:{action}")
     if action == "move":
         if x is None or y is None:
             raise ValueError("move needs x and y")
@@ -121,6 +123,7 @@ def keyboard(action: str, text: str = "", keys: str = "") -> str:
     backspace, pgup/pgdn, arrows) work; anything else is treated as an XKB
     keysym name (case-sensitive).
     """
+    safety.touch(f"keyboard:{action}")
     if action == "type":
         if not text:
             raise ValueError("type needs text")
@@ -157,6 +160,7 @@ def hypr(action: str, target: str = "", workspace: str = "") -> str:
     'fullscreen' — toggle fullscreen on `target` (or the active window).
     'toggle_floating' — toggle floating on `target` (or the active window).
     """
+    safety.touch(f"hypr:{action}")
     if action == "workspace":
         if not workspace:
             raise ValueError("workspace action needs `workspace`")
@@ -196,6 +200,7 @@ def launch(command: str, workspace: str = "") -> dict[str, Any] | str:
     its address/class/title/workspace so you can focus or screenshot it
     immediately.
     """
+    safety.touch("launch")
     before = {c["address"] for c in hyprctl.query("clients")}
     rule = f"[workspace {workspace} silent] " if workspace else ""
     hyprctl.dispatch("exec", rule + command)
@@ -217,6 +222,7 @@ def main() -> None:
     if "--version" in sys.argv:
         print(f"hypruse {__version__}")
         return
+    safety.init()
     mcp.run()
 
 
