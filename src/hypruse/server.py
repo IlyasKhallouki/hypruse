@@ -26,7 +26,23 @@ from hypruse import __version__, hyprctl, safety, session
 from hypruse import input as hinput
 from hypruse import screenshot as shot
 
-mcp = FastMCP("hypruse")
+INSTRUCTIONS = """\
+hypruse controls a live Hyprland desktop. Workflow: call `desktop` first
+and prefer `hypr`/`launch` (IPC — instant and exact) for anything window-
+or workspace-shaped; use `screenshot` + `pointer`/`keyboard` only to see
+and operate inside application windows; call `desktop` again to verify
+effects.
+
+Coordinates: one space everywhere — Hyprland global logical pixels (window
+`at`, cursor, clicks). Screenshots are pixel space: map back with
+global = geometry[:2] + image_pixel / scale, using the metadata's `scale`
+(it already folds in any downscaling). When screenshot returns a file
+path instead of an image, read that file to view the screen.
+
+The cursor and keyboard focus are SHARED with the human at the desk:
+finish what you start, and expect every action to be visible."""
+
+mcp = FastMCP("hypruse", instructions=INSTRUCTIONS)
 
 
 def _runtime_dir() -> Path:
