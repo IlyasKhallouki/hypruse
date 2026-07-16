@@ -36,8 +36,17 @@ effects.
 Coordinates: one space everywhere — Hyprland global logical pixels (window
 `at`, cursor, clicks). Screenshots are pixel space: map back with
 global = geometry[:2] + image_pixel / scale, using the metadata's `scale`
-(it already folds in any downscaling). When screenshot returns a file
-path instead of an image, read that file to view the screen.
+and `image` [w,h] (they already account for any downscaling). When
+screenshot returns a file path instead of an image, read that file.
+
+Clicking precisely — estimating a target's pixel from a full-screen image
+is only accurate to within tens of pixels, which misses small controls. For
+anything small, work coarse-to-fine: screenshot the window or a `region`
+around the target first. A region comes back near 1:1 (scale ~1.0) with the
+target large and its origin in `geometry`, so global = geometry[:2] +
+image_pixel lands cleanly. Estimate by proportion (e.g. "60% across a
+300px-wide crop → x≈180"), not absolute guessing, and after a click that
+should change something, screenshot again to confirm before continuing.
 
 The cursor and keyboard focus are SHARED with the human at the desk:
 finish what you start, and expect every action to be visible."""
