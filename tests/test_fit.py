@@ -103,3 +103,37 @@ def test_capture_folds_applied_scale_into_meta(monkeypatch):
 def test_capture_rejects_bad_scale():
     with pytest.raises(screenshot.ScreenshotError, match="out of range"):
         screenshot.capture(scale=3.0)
+
+
+def test_image_size_png():
+    # 4-byte-length IHDR width/height at offsets 16 and 20
+    png = b"\x89PNG\r\n\x1a\n" + b"\x00" * 4 + b"IHDR"
+    png += (1920).to_bytes(4, "big") + (1080).to_bytes(4, "big")
+    assert screenshot.image_size(png) == (1920, 1080)
+
+
+def test_image_size_jpeg_sof0():
+    jpeg = b"\xff\xd8"
+    jpeg += b"\xff\xe0" + (16).to_bytes(2, "big") + b"JFIF\x00" + b"\x00" * 9  # APP0
+    jpeg += b"\xff\xc0" + (17).to_bytes(2, "big") + b"\x08"
+    jpeg += (720).to_bytes(2, "big") + (1280).to_bytes(2, "big") + b"\x03" + b"\x00" * 6
+    assert screenshot.image_size(jpeg) == (1280, 720)
+
+
+def test_image_size_rejects_unknown():
+    with pytest.raises(screenshot.ScreenshotError, match="dimensions"):
+        screenshot.image_size(b"GIF89a not an image we emit")
+
+
+@pytest.mark.parametrize(
+    "long_edge,max_edge,expected",
+    [
+        (1920, 1568, 1568 / 1920),  # over → downscale
+        (1366, 1568, 1.0),  # under → untouched
+        (1568, 1568, 1.0),  # exactly at limit → untouched
+        (4000, None, 1.0),  # no cap → untouched
+        (4000, 0, 1.0),  # zero cap → untouched
+    ],
+)
+def test_cap_scale(long_edge, max_edge, expected):
+    assert screenshot._cap_scale(long_edge, max_edge) == pytest.approx(expected)

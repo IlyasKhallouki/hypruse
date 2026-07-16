@@ -79,7 +79,10 @@ def screenshot(window: str = "", region: str = "", scale: float = 0) -> list[Any
         # Fit the transport budget (base64 adds ~33%; Claude Desktop caps
         # results at 1 MB) by degrading format before resolution.
         budget = int(os.environ.get("HYPRUSE_MAX_IMAGE_BYTES", "700000"))
-        data, meta = shot.capture(window, region, scale=scale, max_bytes=budget)
+        max_edge = int(os.environ.get("HYPRUSE_MAX_IMAGE_EDGE", "1568"))
+        data, meta = shot.capture(
+            window, region, scale=scale, max_bytes=budget, max_edge=max_edge
+        )
         image_block = ImageContent(
             type="image",
             data=base64.b64encode(data).decode(),

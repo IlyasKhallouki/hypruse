@@ -46,25 +46,27 @@ def _grim(args: list[str]) -> bytes:
     return proc.stdout
 
 
-def _fit_ladder(explicit_scale: float) -> list[tuple[str, int | None, float]]:
-    """(format, jpeg-quality, scale) attempts, best fidelity first.
-
-    Full-resolution JPEG beats half-resolution PNG for reading UI text, so
-    format degrades before resolution does.
+def _fit_ladder(start_scale: float) -> list[tuple[str, int | None, float]]:
+    """(format, jpeg-quality, scale) attempts from a starting scale, best
+    fidelity first. Full-resolution JPEG beats half-resolution PNG for
+    reading UI text, so format degrades before resolution does.
     """
-    if explicit_scale:
-        s = explicit_scale
-        return [("png", None, s), ("jpeg", 85, s), ("jpeg", 80, s * 0.75)]
-    return [("png", None, 1.0), ("jpeg", 85, 1.0), ("jpeg", 85, 0.75), ("jpeg", 80, 0.5)]
+    s = start_scale
+    return [
+        ("png", None, s),
+        ("jpeg", 85, s),
+        ("jpeg", 85, s * 0.75),
+        ("jpeg", 80, s * 0.5),
+    ]
 
 
 def _grab_fitting(
-    base_args: list[str], explicit_scale: float, max_bytes: int | None
+    base_args: list[str], start_scale: float, max_bytes: int | None
 ) -> tuple[bytes, str, float]:
     """Capture within a byte budget; returns (data, format, applied_scale)."""
-    for fmt, quality, s in _fit_ladder(explicit_scale):
+    for fmt, quality, s in _fit_ladder(start_scale):
         args = list(base_args)
-        if s != 1.0:
+        if abs(s - 1.0) > 1e-6:
             args = ["-s", f"{s:g}", *args]
         if fmt == "jpeg":
             args = ["-t", "jpeg", "-q", str(quality), *args]
@@ -75,6 +77,50 @@ def _grab_fitting(
         f"even a downscaled JPEG exceeds the {max_bytes}-byte result budget — "
         "capture a window or region instead of the whole monitor"
     )
+
+
+_SOF_MARKERS = {0xC0, 0xC1, 0xC2, 0xC3, 0xC5, 0xC6, 0xC7, 0xC9, 0xCA, 0xCB, 0xCD, 0xCE, 0xCF}
+
+
+def image_size(data: bytes) -> tuple[int, int]:
+    """(width, height) of PNG or JPEG bytes, without a decode library.
+
+    The model reasons about the image it is actually shown, so hypruse
+    reports the true output dimensions rather than assuming the geometry
+    it asked grim for.
+    """
+    if data[:8] == b"\x89PNG\r\n\x1a\n":
+        w = int.from_bytes(data[16:20], "big")
+        h = int.from_bytes(data[20:24], "big")
+        return w, h
+    if data[:2] == b"\xff\xd8":  # JPEG: find a Start-Of-Frame segment
+        i, n = 2, len(data)
+        while i + 9 < n:
+            if data[i] != 0xFF:
+                i += 1
+                continue
+            marker = data[i + 1]
+            if marker == 0xD8 or marker == 0xD9 or 0xD0 <= marker <= 0xD7:
+                i += 2
+                continue
+            seg = int.from_bytes(data[i + 2 : i + 4], "big")
+            if marker in _SOF_MARKERS:
+                h = int.from_bytes(data[i + 5 : i + 7], "big")
+                w = int.from_bytes(data[i + 7 : i + 9], "big")
+                return w, h
+            i += 2 + seg
+    raise ScreenshotError("could not read image dimensions")
+
+
+def _cap_scale(physical_long_edge: float, max_edge: int | None) -> float:
+    """Downscale factor so the output's long edge fits max_edge, capped at 1.0.
+
+    Prevents the API from silently downscaling a too-large image *under* the
+    model, which would desync the reported scale from what the model sees.
+    """
+    if not max_edge or physical_long_edge <= max_edge:
+        return 1.0
+    return max_edge / physical_long_edge
 
 
 def _scale_at(x: int, y: int, monitors: list[dict[str, Any]]) -> float:
@@ -101,12 +147,14 @@ def capture(
     region: str = "",
     scale: float = 0.0,
     max_bytes: int | None = None,
+    max_edge: int | None = None,
 ) -> tuple[bytes, dict[str, Any]]:
     """Returns (image_bytes, metadata). Exactly one of window/region, or
     neither for the focused monitor. `scale` (0 = auto) forces a capture
-    scale; `max_bytes` fits the result into a transport budget by degrading
-    format before resolution. The applied scale is folded into metadata so
-    the pixel→global mapping stays exact."""
+    scale; `max_edge` caps the output's long edge (so the API never
+    downscales it under the model); `max_bytes` fits a transport budget by
+    degrading format before resolution. Any applied downscale is folded into
+    the metadata `scale`, so the pixel→global mapping stays exact."""
     if window and region:
         raise ScreenshotError("pass window OR region, not both")
     if scale and not 0.1 <= scale <= 1.0:
@@ -119,6 +167,7 @@ def capture(
         base = ["-g", f"{x},{y} {w}x{h}"]
         meta: dict[str, Any] = {"target": "region", "geometry": [x, y, w, h]}
         base_scale = _scale_at(x, y, monitors)
+        physical_long = max(w, h) * base_scale
     elif window:
         active = (hyprctl.query("activewindow") or {}).get("address")
         c = _find_window(window, hyprctl.query("clients"), active)
@@ -131,6 +180,7 @@ def capture(
             "geometry": [x, y, w, h],
         }
         base_scale = _scale_at(x, y, monitors)
+        physical_long = max(w, h) * base_scale
     else:
         m = next((m for m in monitors if m.get("focused")), monitors[0])
         base = ["-o", m["name"]]
@@ -140,9 +190,14 @@ def capture(
             "geometry": [m["x"], m["y"], m["width"], m["height"]],
         }
         base_scale = float(m.get("scale", 1.0))
+        physical_long = max(m["width"], m["height"])
 
-    data, fmt, applied = _grab_fitting(base, scale, max_bytes)
+    # explicit scale wins; otherwise fit the long edge to keep the mapping honest
+    start_scale = scale or _cap_scale(physical_long, max_edge)
+    data, fmt, applied = _grab_fitting(base, start_scale, max_bytes)
+    iw, ih = image_size(data)
+    meta["image"] = [iw, ih]
     meta["format"] = fmt
-    meta["scale"] = base_scale * applied
-    meta["coords"] = "global = geometry[:2] + image_pixel / scale"
+    meta["scale"] = round(base_scale * applied, 6)
+    meta["coords"] = "click a target at global = geometry[:2] + image_pixel / scale"
     return data, meta
