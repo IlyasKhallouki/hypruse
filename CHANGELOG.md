@@ -6,66 +6,33 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
-### Changed
-- Cross-tool guidance moved into MCP server `instructions` (rendered once
-  by clients); tool descriptions cut to terse schemas (~75% smaller,
-  total per-tool payload 5.7 kB → 3.8 kB) so clients load them eagerly
-  instead of deferring them behind a tool-search step.
-
-### Added
-- Screenshot metadata now reports the true output dimensions (`image`
-  [w,h]); image mode caps the long edge (`HYPRUSE_MAX_IMAGE_EDGE`, default
-  1568) so the API never silently downscales a capture *under* the model
-  and desyncs the coordinate mapping — a systematic click-accuracy bug on
-  models with a smaller image limit. Server instructions now teach
-  coarse-to-fine clicking (zoom into a region, estimate by proportion,
-  verify) to fix the residual pixel-estimation error.
-- Screenshot auto-fit: in image mode, captures fit a transport byte budget
-  (`HYPRUSE_MAX_IMAGE_BYTES`, default 700 kB raw ≈ 933 kB base64, sized to
-  Claude Desktop's 1 MB result cap) by degrading format before resolution
-  (native PNG → full-res JPEG → stepped downscale); the applied scale is
-  folded into the metadata so pixel→global mapping stays exact. Optional
-  `scale` tool parameter for deliberate zoom-outs. File mode stays native.
-
-### Fixed
-- Screenshot image mode returned the fastmcp `Image` helper inside a mixed
-  content list, which some SDK versions refuse to serialize ("Unable to
-  serialize unknown type") — seen live from a desktop client. Both modes
-  now return wire-level `ImageContent`/`TextContent` directly, and a new
-  e2e tier round-trips every mode through a real MCP stdio client.
-- Session discovery: when the host app launches hypruse with a stripped
-  environment (dbus/systemd-activated desktop apps), the server now finds
-  `HYPRLAND_INSTANCE_SIGNATURE` and `WAYLAND_DISPLAY` from their sockets
-  under `XDG_RUNTIME_DIR` instead of failing with "is hyprland running?".
-  Existing env is never overridden; newest live instance wins.
-- `launch`: single-instance apps (e.g. browsers) open their window from an
-  existing process and ignore `[workspace N silent]` exec rules — the
-  window is now detected wherever it lands and moved to the requested
-  workspace. Detection window is `wait_s` (default 8 s, was a fixed 3 s).
-  Found in the first real-world test drive.
-- Stored screenshots are pruned to the 20 newest (XDG_RUNTIME_DIR is
-  tmpfs/RAM).
-
-### Docs
-- Performance notes: measured server latencies and the permission-prompt
-  effect, with a Claude Code allowlist example.
-
 ## [0.1.0] — 2026-07-16
 
 Initial release.
 
 ### Added
 - MCP stdio server with six tools: `desktop`, `screenshot`, `pointer`,
-  `keyboard`, `hypr`, `launch`.
+  `keyboard`, `hypr`, `launch`, plus cross-tool guidance in the server
+  `instructions` and terse per-tool schemas for eager client loading.
 - Semantic desktop snapshot over hyprctl IPC (token-lean, fixture-tested).
 - Screenshots via grim: focused monitor, exact window crop, region zoom,
-  with pixel→global coordinate metadata. Default returns a saved PNG path
-  (verified working with hosts that mangle inline image blocks);
-  `HYPRUSE_SCREENSHOT_MODE=image` opts into inline MCP image content.
+  with true output dimensions and scale for exact pixel→global mapping.
+  Default returns a saved PNG path (works with hosts that mangle inline
+  image blocks); `HYPRUSE_SCREENSHOT_MODE=image` returns wire-level image
+  content auto-fit to a transport byte budget and long-edge cap
+  (`HYPRUSE_MAX_IMAGE_BYTES`, `HYPRUSE_MAX_IMAGE_EDGE`) by degrading format
+  before resolution, so the API never silently downscales under the model.
+  Coarse-to-fine clicking guidance to counter pixel-estimation error.
 - Pointer input over a raw `zwlr_virtual_pointer_v1` wire client — no
   ydotool, no uinput, no daemon; positioning via `hyprctl movecursor`.
 - Keyboard input via wtype (XKB keymap upload; unicode/layout-correct),
   with combo parsing (`ctrl+shift+t`, `super+enter`, bare-mod taps).
-- Workspace/window dispatchers and app launch with new-window detection.
+- Workspace/window dispatchers and app launch with new-window detection,
+  including single-instance apps (browsers) whose window is relocated to
+  the requested workspace.
+- Session discovery: finds `HYPRLAND_INSTANCE_SIGNATURE` / `WAYLAND_DISPLAY`
+  from runtime sockets when the host launches the server with a stripped
+  environment (dbus/systemd-activated desktop apps).
 - Activity beacon + Waybar kill-switch indicator module.
-- Unit suite, seat-safe live e2e, supervised input verification script, CI.
+- Unit suite, seat-safe live e2e, MCP stdio round-trip tests, supervised
+  input verification script, CI.
