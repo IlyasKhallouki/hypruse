@@ -20,6 +20,7 @@ from mcp.server.fastmcp import FastMCP
 from mcp.server.fastmcp import Image as MCPImage
 
 from hypruse import __version__, hyprctl
+from hypruse import input as hinput
 from hypruse import screenshot as shot
 
 mcp = FastMCP("hypruse")
@@ -65,6 +66,71 @@ def screenshot(window: str = "", region: str = "") -> list[Any]:
         path.write_bytes(png)
         return [f"screenshot written to {path} — read that file to view it", json.dumps(meta)]
     return [MCPImage(data=png, format="png"), json.dumps(meta)]
+
+
+@mcp.tool()
+def pointer(
+    action: str,
+    x: float | None = None,
+    y: float | None = None,
+    button: str = "left",
+    to_x: float | None = None,
+    to_y: float | None = None,
+    scroll_dy: float = 0,
+    scroll_dx: float = 0,
+    double: bool = False,
+) -> str:
+    """Mouse control, in the same global coordinates `desktop` and
+    `screenshot` metadata use. Actions:
+    'move' — place cursor at (x, y).
+    'click' — click `button` (left/right/middle), optionally moving to (x, y)
+    first; set double=true for a double-click.
+    'drag' — hold `button` from (x, y) to (to_x, to_y).
+    'scroll' — wheel by scroll_dy notches (positive scrolls content down),
+    optionally moving to (x, y) first.
+
+    The cursor and keyboard focus are SHARED with the human at the desk:
+    prefer `hypr`/`launch` for window management, keep pointer use inside
+    application windows, and finish what you start.
+    """
+    if action == "move":
+        if x is None or y is None:
+            raise ValueError("move needs x and y")
+        hinput.move(x, y)
+    elif action == "click":
+        hinput.click(x, y, button=button, double=double)
+    elif action == "drag":
+        if None in (x, y, to_x, to_y):
+            raise ValueError("drag needs x, y, to_x, to_y")
+        hinput.drag(x, y, to_x, to_y, button=button)  # type: ignore[arg-type]
+    elif action == "scroll":
+        hinput.scroll(dy=scroll_dy, dx=scroll_dx, x=x, y=y)
+    else:
+        raise ValueError(f"unknown action {action!r}: move|click|drag|scroll")
+    return f"{action} ok; cursor now at {hyprctl.cursor_pos()}"
+
+
+@mcp.tool()
+def keyboard(action: str, text: str = "", keys: str = "") -> str:
+    """Keyboard input to the FOCUSED window (focus one first via the `hypr`
+    tool). Actions:
+    'type' — type `text` literally (unicode-safe, layout-correct).
+    'key' — press `keys`, e.g. 'ctrl+shift+t', 'super+enter', 'esc', 'F5'.
+    Modifiers: ctrl, shift, alt, super. Common aliases (enter, esc, tab,
+    backspace, pgup/pgdn, arrows) work; anything else is treated as an XKB
+    keysym name (case-sensitive).
+    """
+    if action == "type":
+        if not text:
+            raise ValueError("type needs text")
+        hinput.type_text(text)
+        return f"typed {len(text)} characters"
+    if action == "key":
+        if not keys:
+            raise ValueError("key needs keys")
+        hinput.key_combo(keys)
+        return f"pressed {keys}"
+    raise ValueError(f"unknown action {action!r}: type|key")
 
 
 def main() -> None:
