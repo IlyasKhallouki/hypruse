@@ -1,6 +1,6 @@
 """Activity beacon and kill-switch support.
 
-The seat — cursor, keyboard focus — is shared between the agent and the
+The seat, cursor, keyboard focus, is shared between the agent and the
 human at the desk. hypruse therefore keeps a runtime beacon at
 $XDG_RUNTIME_DIR/hypruse/state.json:
 
@@ -8,7 +8,7 @@ $XDG_RUNTIME_DIR/hypruse/state.json:
      "last_action": "pointer:click", "last_ts": 1789...}
 
 written at startup, updated on every acting tool call, removed on clean
-shutdown. Anything can watch it — the shipped Waybar module (waybar/)
+shutdown. Anything can watch it, the shipped Waybar module (waybar/)
 shows a red indicator while an agent has hands on the desktop, and its
 click action (or a Hyprland keybind) runs `pkill -f hypruse`: the
 process dies mid-action at worst, never holding a button down, because
@@ -57,7 +57,7 @@ def init() -> None:
     # Ctrl+C gracefully, and overriding it with sys.exit() deadlocks the
     # interpreter against the stdin-reader thread at shutdown ("could not
     # acquire lock for stdin"). A lingering beacon after SIGTERM is harmless
-    # — the Waybar module liveness-checks the pid.
+    #, the Waybar module liveness-checks the pid.
     with contextlib.suppress(ValueError):  # signal() only works on the main thread
         signal.signal(signal.SIGTERM, _on_sigterm)
 

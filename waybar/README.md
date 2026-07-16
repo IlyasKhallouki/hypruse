@@ -23,7 +23,7 @@ Add the module to your Waybar config:
 }
 ```
 
-Style it with your theme's alert color (no hardcoded palette — reuse your
+Style it with your theme's alert color (no hardcoded palette, reuse your
 own variables):
 
 ```css

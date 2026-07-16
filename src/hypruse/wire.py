@@ -1,7 +1,7 @@
 """Minimal Wayland client speaking zwlr_virtual_pointer_unstable_v1.
 
 hypruse injects pointer input by being a regular Wayland client of the
-user's compositor — the same mechanism wlrctl uses — rather than a uinput
+user's compositor, the same mechanism wlrctl uses, rather than a uinput
 daemon (ydotool) or the RemoteDesktop portal (which
 xdg-desktop-portal-hyprland does not implement). Nothing here needs root,
 /dev/uinput access, or a background service.
@@ -114,14 +114,14 @@ class VirtualPointer:
 
     Cheap to create (~1 ms); the server keeps one alive and recreates it if
     the connection drops. Use as a context manager to guarantee the device
-    is destroyed — a leaked virtual pointer lingers in `hyprctl devices`.
+    is destroyed, a leaked virtual pointer lingers in `hyprctl devices`.
     """
 
     def __init__(self, display: str | None = None):
         runtime = os.environ.get("XDG_RUNTIME_DIR")
         display = display or os.environ.get("WAYLAND_DISPLAY", "wayland-0")
         if not runtime and not display.startswith("/"):
-            raise WireError("XDG_RUNTIME_DIR not set — not inside a Wayland session?")
+            raise WireError("XDG_RUNTIME_DIR not set, not inside a Wayland session?")
         path = display if display.startswith("/") else os.path.join(runtime, display)
         self._sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
         self._sock.settimeout(3.0)

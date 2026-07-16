@@ -1,6 +1,6 @@
 name: release
 
-# Publishes to PyPI on a version tag via Trusted Publishing (OIDC) — no
+# Publishes to PyPI on a version tag via Trusted Publishing (OIDC), no
 # API token stored anywhere. One-time PyPI setup is documented in
 # RELEASING.md (add a pending publisher for this repo + workflow).
 

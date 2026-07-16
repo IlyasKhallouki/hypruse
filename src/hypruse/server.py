@@ -1,9 +1,9 @@
-"""hypruse MCP server — computer use for Hyprland.
+"""hypruse MCP server, computer use for Hyprland.
 
 Design: semantic-first. An agent should read `desktop` and act through
 `hypr`/`launch` (IPC, milliseconds, deterministic) and reach for
 `screenshot` + `pointer`/`keyboard` only to work *inside* application
-windows. All coordinates are Hyprland's global logical layout pixels —
+windows. All coordinates are Hyprland's global logical layout pixels,
 the same space cursorpos, window `at`, and movecursor use.
 """
 
@@ -28,20 +28,20 @@ from hypruse import screenshot as shot
 
 INSTRUCTIONS = """\
 hypruse controls a live Hyprland desktop. Workflow: call `desktop` first
-and prefer `hypr`/`launch` (IPC — instant and exact) for anything window-
+and prefer `hypr`/`launch` (IPC, instant and exact) for anything window-
 or workspace-shaped; use `screenshot` + `pointer`/`keyboard` only to see
 and operate inside application windows; call `desktop` again to verify
 effects.
 
-Coordinates: one space everywhere — Hyprland global logical pixels (window
+Coordinates: one space everywhere, Hyprland global logical pixels (window
 `at`, cursor, clicks). Screenshots are pixel space: map back with
 global = geometry[:2] + image_pixel / scale, using the metadata's `scale`
 and `image` [w,h] (they already account for any downscaling). When
 screenshot returns a file path instead of an image, read that file.
 
-Clicking precisely — estimating a target's pixel from a full-screen image
-is only accurate to within tens of pixels, which misses small controls. For
-anything small, work coarse-to-fine: screenshot the window or a `region`
+Clicking precisely is hard: estimating a target's pixel from a full-screen
+image is only accurate to within tens of pixels, which misses small
+controls. For anything small, work coarse-to-fine: screenshot the window or a `region`
 around the target first. A region comes back near 1:1 (scale ~1.0) with the
 target large and its origin in `geometry`, so global = geometry[:2] +
 image_pixel lands cleanly. Estimate by proportion (e.g. "60% across a
@@ -62,7 +62,7 @@ def _runtime_dir() -> Path:
 
 
 def _prune_shots(d: Path, keep: int = 20) -> None:
-    """XDG_RUNTIME_DIR is tmpfs (RAM) — cap stored captures to the newest N."""
+    """XDG_RUNTIME_DIR is tmpfs (RAM), cap stored captures to the newest N."""
     for old in sorted(d.glob("shot-*.*"))[:-keep]:
         with contextlib.suppress(OSError):
             old.unlink()
@@ -79,9 +79,9 @@ def desktop() -> dict[str, Any]:
 @mcp.tool()
 def screenshot(window: str = "", region: str = "", scale: float = 0) -> list[Any]:
     """Capture the focused monitor, a window (`window`: "active" or an
-    address from desktop — cheapest for reading one app), or a `region`
+    address from desktop, cheapest for reading one app), or a `region`
     "x,y,WxH". Returns the image (or a file path to read) + JSON metadata
-    with geometry/scale for pixel→global mapping. `scale` 0.1–1.0:
+    with geometry/scale for pixel→global mapping. `scale` 0.1-1.0:
     optional deliberate downscale, usually leave unset."""
     safety.touch("screenshot")
     if os.environ.get("HYPRUSE_SCREENSHOT_MODE", "file") == "image":
@@ -105,7 +105,7 @@ def screenshot(window: str = "", region: str = "", scale: float = 0) -> list[Any
     _prune_shots(d)
     return [
         TextContent(
-            type="text", text=f"screenshot written to {path} — read that file to view it"
+            type="text", text=f"screenshot written to {path}, read that file to view it"
         ),
         TextContent(type="text", text=json.dumps(meta)),
     ]
@@ -171,7 +171,7 @@ _ADDR = re.compile(r"^0x[0-9a-fA-F]+$")
 def _addr(target: str) -> str:
     if not _ADDR.match(target):
         raise ValueError(
-            f"{target!r} is not a window address — use the `address` field from desktop()"
+            f"{target!r} is not a window address, use the `address` field from desktop()"
         )
     return f"address:{target}"
 
@@ -228,8 +228,8 @@ def _await_new_window(before: set[str], wait_s: float) -> dict[str, Any] | None:
 @mcp.tool()
 def launch(command: str, workspace: str = "", wait_s: float = 8.0) -> dict[str, Any] | str:
     """Run `command` via Hyprland exec. Optional `workspace` placement
-    (silent — works even for single-instance apps like browsers, whose
-    window gets moved after it appears) and `wait_s` (1–30, default 8;
+    (silent, works even for single-instance apps like browsers, whose
+    window gets moved after it appears) and `wait_s` (1-30, default 8;
     raise for slow apps). Returns the new window's
     address/class/title/workspace, or a timeout note."""
     safety.touch("launch")
@@ -240,7 +240,7 @@ def launch(command: str, workspace: str = "", wait_s: float = 8.0) -> dict[str, 
     win = _await_new_window(before, wait_s)
     if win is None:
         return (
-            f"launched, but no new window appeared within {wait_s:.0f}s — slow or "
+            f"launched, but no new window appeared within {wait_s:.0f}s, slow or "
             "single-instance apps may open late and on their own workspace; call "
             "desktop() to find the window, then hypr move_window if needed"
         )
@@ -263,7 +263,7 @@ def launch(command: str, workspace: str = "", wait_s: float = 8.0) -> dict[str, 
 
 
 _INTERACTIVE_HELP = """\
-hypruse {version} — an MCP server, not an interactive program.
+hypruse {version}, an MCP server, not an interactive program.
 
 It speaks the MCP protocol over stdin/stdout and is meant to be launched by
 an MCP client, so running it directly in a terminal just waits silently for
@@ -281,7 +281,7 @@ def main() -> None:
     if "--version" in sys.argv:
         print(f"hypruse {__version__}")
         return
-    # A human ran it by hand (stdin is a terminal, not a client pipe) — an
+    # A human ran it by hand (stdin is a terminal, not a client pipe), an
     # MCP stdio client always connects stdin to a pipe, so a TTY here means
     # nobody is going to talk to us. Explain instead of hanging.
     if sys.stdin is None or sys.stdin.isatty():

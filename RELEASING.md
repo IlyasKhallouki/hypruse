@@ -7,13 +7,13 @@ accounts/credentials; the rest is automated.
 
 1. **[you] Make the repo public** on GitHub (Settings → General → Danger
    Zone). The awesome-list PRs and AUR source tarballs depend on this.
-2. **[you] PyPI Trusted Publisher** — on PyPI, add a *pending* publisher so
+2. **[you] PyPI Trusted Publisher:** on PyPI, add a *pending* publisher so
    the first `release` workflow run can publish without a token
    (https://pypi.org/manage/account/publishing/):
    - Project: `hypruse`
    - Owner: `IlyasKhallouki`  · Repo: `hypruse`
    - Workflow: `release.yml`  · Environment: `pypi`
-3. **[you] AUR SSH key** — add your public key at
+3. **[you] AUR SSH key:** add your public key at
    https://aur.archlinux.org/account, if not already done.
 
 ## Cutting a release
@@ -47,7 +47,7 @@ makepkg --printsrcinfo > .SRCINFO
 
 ## Listings (after public + first release)
 
-- `awesome-mcp-servers` and `awesome-hyprland` — PR one entry each.
+- `awesome-mcp-servers` and `awesome-hyprland`: PR one entry each.
 - The MCP registry.
 
 Test a PKGBUILD locally before pushing: `makepkg -si` in its directory.

@@ -1,8 +1,8 @@
 """Session discovery for stripped environments.
 
 Desktop apps launched via dbus/systemd activation often run their MCP
-servers without the session variables a terminal has —
-HYPRLAND_INSTANCE_SIGNATURE and WAYLAND_DISPLAY in particular. Both are
+servers without the session variables a terminal has, notably
+HYPRLAND_INSTANCE_SIGNATURE and WAYLAND_DISPLAY. Both are
 recoverable from the filesystem, because the sockets they point at live
 in deterministic places:
 

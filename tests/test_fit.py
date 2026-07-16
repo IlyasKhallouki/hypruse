@@ -1,6 +1,6 @@
 """Byte-budget auto-fit for screenshots.
 
-Regression source: Claude Desktop rejects tool results over 1 MB — a
+Regression source: Claude Desktop rejects tool results over 1 MB, a
 1080p PNG (~900 KB raw, ~1.2 MB as base64) blew the cap on first use.
 """
 

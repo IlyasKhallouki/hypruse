@@ -1,7 +1,7 @@
 """Human-supervised input verification. TAKES OVER cursor + keyboard ~10s.
 
 Run it, take your hands off, watch: it opens a floating kitty on your
-current workspace, clicks into it, scrolls, types a marker — then reads
+current workspace, clicks into it, scrolls, types a marker, then reads
 the terminal's actual screen text back over kitty remote control and
 asserts every event arrived. Restores focus and cleans up afterwards.
 

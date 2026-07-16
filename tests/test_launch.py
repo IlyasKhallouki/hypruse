@@ -1,6 +1,6 @@
 """launch() behaviour around single-instance apps and slow startups.
 
-Regression source: real test session 2026-07-16 — `google-chrome
+Regression source: real test session 2026-07-16, `google-chrome
 --profile-picker` with workspace=2 opened its window from the existing
 Chrome process on workspace 5, and the old 3s detection window missed it
 entirely.

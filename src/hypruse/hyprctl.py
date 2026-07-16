@@ -6,7 +6,7 @@ the hyprctl binary rather than opening the .socket directly so behaviour
 always matches what the user's own shell would do.
 
 Coordinates everywhere in hypruse are Hyprland's global *logical* layout
-coordinates — the same space `hyprctl cursorpos`, client `at`, and
+coordinates, the same space `hyprctl cursorpos`, client `at`, and
 `dispatch movecursor` use.
 """
 
@@ -24,7 +24,7 @@ class HyprctlError(RuntimeError):
 
 def _run(*args: str) -> str:
     if shutil.which("hyprctl") is None:
-        raise HyprctlError("hyprctl not found — hypruse needs a running Hyprland session")
+        raise HyprctlError("hyprctl not found, hypruse needs a running Hyprland session")
     try:
         proc = subprocess.run(
             ["hyprctl", *args], capture_output=True, text=True, timeout=5
@@ -85,7 +85,7 @@ def snapshot_from(
     active_window: dict[str, Any] | None,
     cursor: tuple[int, int] | None,
 ) -> dict[str, Any]:
-    """Pure assembly of the desktop state — separated from IPC for testability."""
+    """Pure assembly of the desktop state, separated from IPC for testability."""
     visible = {m.get("activeWorkspace", {}).get("id") for m in monitors}
     return {
         "monitors": [

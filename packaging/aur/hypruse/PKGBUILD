@@ -2,7 +2,7 @@
 pkgname=hypruse
 pkgver=0.1.1
 pkgrel=1
-pkgdesc="Computer use for Hyprland — an MCP server giving AI agents native control of a Wayland desktop"
+pkgdesc="Computer use for Hyprland, an MCP server giving AI agents native control of a Wayland desktop"
 arch=('any')
 url="https://github.com/IlyasKhallouki/hypruse"
 license=('MIT')

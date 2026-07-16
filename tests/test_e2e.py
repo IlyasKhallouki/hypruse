@@ -42,9 +42,9 @@ def test_screenshot_live_monitor_and_region():
 
 @needs_hyprland
 def test_virtual_pointer_handshake_no_events():
-    """Bind the manager and create/destroy a device — proves the protocol
+    """Bind the manager and create/destroy a device, proves the protocol
     path end-to-end without sending a single input event."""
     with wire.VirtualPointer() as vp:
         assert vp._pointer > 0
     # context manager closed the connection; a leaked device would show in
-    # `hyprctl devices` — creation+destroy inside one connection is silent.
+    # `hyprctl devices`, creation+destroy inside one connection is silent.

@@ -34,7 +34,7 @@ def test_combo_to_wtype_args_press_release_order():
 
 def test_click_validates_before_touching_compositor():
     with pytest.raises(hinput.InputError, match="both x and y"):
-        hinput.click(x=100)  # y missing — must fail before any socket use
+        hinput.click(x=100)  # y missing, must fail before any socket use
     with pytest.raises(hinput.InputError, match="unknown button"):
         hinput.click(button="laser")
 

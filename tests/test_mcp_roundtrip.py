@@ -1,6 +1,6 @@
 """Full MCP stdio round-trips against a live session:  pytest -m e2e
 
-This is the layer that catches serialization bugs the unit tests cannot —
+This is the layer that catches serialization bugs the unit tests cannot:
 tool results here have passed through FastMCP's converter and the MCP
 wire, exactly what an MCP client receives. Regression source: a desktop
 client got 'Unable to serialize unknown type: …fastmcp…Image' from

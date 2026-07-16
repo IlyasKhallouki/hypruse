@@ -7,7 +7,7 @@ sidesteps the known multi-monitor mapping bugs of absolute virtual-pointer
 motion (hyprwm/Hyprland#6749).
 
 Keyboard: wtype, which uploads its own XKB keymap over
-zwp_virtual_keyboard_v1 — text lands layout-correct including unicode,
+zwp_virtual_keyboard_v1, text lands layout-correct including unicode,
 with no uinput scancode guessing.
 """
 
@@ -105,7 +105,7 @@ def combo_to_wtype_args(mods: list[str], key: str | None) -> list[str]:
 
 def _wtype(args: list[str], stdin: str | None = None) -> None:
     if shutil.which("wtype") is None:
-        raise InputError("wtype not found — install wtype for keyboard input")
+        raise InputError("wtype not found, install wtype for keyboard input")
     proc = subprocess.run(
         ["wtype", *args], input=stdin, text=True, capture_output=True, timeout=15
     )

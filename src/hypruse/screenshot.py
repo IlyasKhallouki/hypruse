@@ -39,7 +39,7 @@ def parse_region(region: str) -> tuple[int, int, int, int]:
 
 def _grim(args: list[str]) -> bytes:
     if shutil.which("grim") is None:
-        raise ScreenshotError("grim not found — install grim for screenshots")
+        raise ScreenshotError("grim not found, install grim for screenshots")
     proc = subprocess.run(["grim", *args, "-"], capture_output=True, timeout=10)
     if proc.returncode != 0 or not proc.stdout:
         raise ScreenshotError(f"grim failed: {proc.stderr.decode(errors='replace').strip()}")
@@ -74,7 +74,7 @@ def _grab_fitting(
         if max_bytes is None or len(data) <= max_bytes:
             return data, fmt, s
     raise ScreenshotError(
-        f"even a downscaled JPEG exceeds the {max_bytes}-byte result budget — "
+        f"even a downscaled JPEG exceeds the {max_bytes}-byte result budget; "
         "capture a window or region instead of the whole monitor"
     )
 
@@ -138,7 +138,7 @@ def _find_window(window: str, clients: list[dict[str, Any]], active: str | None)
         if c.get("address") == target:
             return c
     raise ScreenshotError(
-        f"window {target!r} not found — call desktop() for current addresses"
+        f"window {target!r} not found, call desktop() for current addresses"
     )
 
 
@@ -158,7 +158,7 @@ def capture(
     if window and region:
         raise ScreenshotError("pass window OR region, not both")
     if scale and not 0.1 <= scale <= 1.0:
-        raise ScreenshotError(f"scale {scale} out of range (0.1–1.0, or 0 for auto)")
+        raise ScreenshotError(f"scale {scale} out of range (0.1-1.0, or 0 for auto)")
 
     monitors = hyprctl.query("monitors")
 

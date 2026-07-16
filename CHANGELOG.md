@@ -6,7 +6,7 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
-## [0.1.1] — 2026-07-16
+## [0.1.1] - 2026-07-16
 
 ### Fixed
 - Ctrl+C no longer hangs with a "could not acquire lock for stdin at
@@ -19,7 +19,7 @@ All notable changes to this project are documented here. The format follows
   register it, then exits, instead of silently blocking as a stdio server
   waiting for a client that will never connect.
 
-## [0.1.0] — 2026-07-16
+## [0.1.0] - 2026-07-16
 
 Initial release.
 
@@ -36,7 +36,7 @@ Initial release.
   (`HYPRUSE_MAX_IMAGE_BYTES`, `HYPRUSE_MAX_IMAGE_EDGE`) by degrading format
   before resolution, so the API never silently downscales under the model.
   Coarse-to-fine clicking guidance to counter pixel-estimation error.
-- Pointer input over a raw `zwlr_virtual_pointer_v1` wire client — no
+- Pointer input over a raw `zwlr_virtual_pointer_v1` wire client, no
   ydotool, no uinput, no daemon; positioning via `hyprctl movecursor`.
 - Keyboard input via wtype (XKB keymap upload; unicode/layout-correct),
   with combo parsing (`ctrl+shift+t`, `super+enter`, bare-mod taps).
