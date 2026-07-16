@@ -1,3 +1,3 @@
-from hypruse.server import main
+from hypruse.cli import main
 
 main()

@@ -27,7 +27,7 @@ Homepage = "https://github.com/IlyasKhallouki/hypruse"
 Issues = "https://github.com/IlyasKhallouki/hypruse/issues"
 
 [project.scripts]
-hypruse = "hypruse.server:main"
+hypruse = "hypruse.cli:main"
 
 [build-system]
 requires = ["hatchling"]
