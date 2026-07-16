@@ -1,0 +1,89 @@
+{
+  "monitors": [
+    {
+      "name": "eDP-1",
+      "width": 1920,
+      "height": 1080,
+      "x": 0,
+      "y": 0,
+      "scale": 1.0,
+      "focused": true,
+      "activeWorkspace": { "id": 2, "name": "2" }
+    },
+    {
+      "name": "DP-3",
+      "width": 2560,
+      "height": 1440,
+      "x": 1920,
+      "y": 0,
+      "scale": 1.25,
+      "focused": false,
+      "activeWorkspace": { "id": 5, "name": "5" }
+    }
+  ],
+  "workspaces": [
+    { "id": 5, "name": "5", "monitor": "DP-3", "windows": 1 },
+    { "id": 2, "name": "2", "monitor": "eDP-1", "windows": 2 },
+    { "id": -98, "name": "special:scratch", "monitor": "eDP-1", "windows": 1 }
+  ],
+  "clients": [
+    {
+      "address": "0xaaaa000000000001",
+      "mapped": true,
+      "hidden": false,
+      "at": [10, 45],
+      "size": [940, 1025],
+      "workspace": { "id": 2, "name": "2" },
+      "floating": false,
+      "class": "kitty",
+      "title": "~/projects",
+      "pid": 4242,
+      "fullscreen": 0,
+      "focusHistoryID": 0
+    },
+    {
+      "address": "0xaaaa000000000002",
+      "mapped": true,
+      "hidden": false,
+      "at": [960, 45],
+      "size": [950, 1025],
+      "workspace": { "id": 2, "name": "2" },
+      "floating": false,
+      "class": "firefox",
+      "title": "Hyprland Wiki — Dispatchers",
+      "pid": 4243,
+      "fullscreen": 2,
+      "focusHistoryID": 1
+    },
+    {
+      "address": "0xaaaa000000000003",
+      "mapped": true,
+      "hidden": true,
+      "at": [200, 200],
+      "size": [800, 500],
+      "workspace": { "id": -98, "name": "special:scratch" },
+      "floating": true,
+      "class": "org.pulseaudio.pavucontrol",
+      "title": "Volume Control",
+      "pid": 4244,
+      "fullscreen": false,
+      "focusHistoryID": 2
+    },
+    {
+      "address": "0xaaaa000000000004",
+      "mapped": false,
+      "hidden": false,
+      "at": [0, 0],
+      "size": [0, 0],
+      "workspace": { "id": 5, "name": "5" },
+      "floating": false,
+      "class": "unmapped-ghost",
+      "title": "",
+      "pid": 4245,
+      "fullscreen": 0,
+      "focusHistoryID": 3
+    }
+  ],
+  "activewindow": { "address": "0xaaaa000000000001", "title": "~/projects" },
+  "cursorpos": { "x": 640, "y": 400 }
+}
