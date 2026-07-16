@@ -9,6 +9,7 @@ the same space cursorpos, window `at`, and movecursor use.
 
 from __future__ import annotations
 
+import base64
 import contextlib
 import json
 import os
@@ -19,7 +20,7 @@ from pathlib import Path
 from typing import Any
 
 from mcp.server.fastmcp import FastMCP
-from mcp.server.fastmcp import Image as MCPImage
+from mcp.types import ImageContent, TextContent
 
 from hypruse import __version__, hyprctl, safety, session
 from hypruse import input as hinput
@@ -71,13 +72,25 @@ def screenshot(window: str = "", region: str = "") -> list[Any]:
     """
     safety.touch("screenshot")
     png, meta = shot.capture(window, region)
+    meta_block = TextContent(type="text", text=json.dumps(meta))
     if os.environ.get("HYPRUSE_SCREENSHOT_MODE", "file") == "image":
-        return [MCPImage(data=png, format="png"), json.dumps(meta)]
+        # Wire-level content types, not the fastmcp Image helper: helpers
+        # inside a mixed list hit "Unable to serialize unknown type" on
+        # some SDK versions (seen live with a desktop-app client).
+        image_block = ImageContent(
+            type="image", data=base64.b64encode(png).decode(), mimeType="image/png"
+        )
+        return [image_block, meta_block]
     d = _runtime_dir()
     path = d / f"shot-{int(time.time() * 1000)}.png"
     path.write_bytes(png)
     _prune_shots(d)
-    return [f"screenshot written to {path} — read that file to view it", json.dumps(meta)]
+    return [
+        TextContent(
+            type="text", text=f"screenshot written to {path} — read that file to view it"
+        ),
+        meta_block,
+    ]
 
 
 @mcp.tool()

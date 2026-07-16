@@ -7,6 +7,11 @@ All notable changes to this project are documented here. The format follows
 ## [Unreleased]
 
 ### Fixed
+- Screenshot image mode returned the fastmcp `Image` helper inside a mixed
+  content list, which some SDK versions refuse to serialize ("Unable to
+  serialize unknown type") — seen live from a desktop client. Both modes
+  now return wire-level `ImageContent`/`TextContent` directly, and a new
+  e2e tier round-trips every mode through a real MCP stdio client.
 - Session discovery: when the host app launches hypruse with a stripped
   environment (dbus/systemd-activated desktop apps), the server now finds
   `HYPRLAND_INSTANCE_SIGNATURE` and `WAYLAND_DISPLAY` from their sockets
