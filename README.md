@@ -49,6 +49,12 @@ Design decisions:
 
 Requirements: Hyprland, `grim`, `wtype` (most Hyprland setups already have both), and [uv](https://docs.astral.sh/uv/).
 
+Arch Linux, from the [AUR](https://aur.archlinux.org/packages/hypruse):
+
+```sh
+yay -S hypruse        # or hypruse-git for main
+```
+
 Claude Code:
 
 ```sh
