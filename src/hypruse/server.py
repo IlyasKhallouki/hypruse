@@ -31,10 +31,11 @@ hypruse controls a live Hyprland desktop. Workflow: call `desktop` first
 and prefer `hypr`/`launch` (IPC, instant and exact) for anything window-
 or workspace-shaped; use `screenshot` + `pointer`/`keyboard` only to see
 and operate inside application windows; call `desktop` again to verify
-effects. `binds` lists the owner's own keybinds: when one matches the
-task (launchers, app shortcuts), trigger it via `keyboard` instead of
-clicking. After actions with delayed effects, block on `wait_for`
-(window_open, title_change) instead of sleeping.
+effects. `binds` lists the owner's own keybinds; to run one, call
+`use_bind` with its combo (synthetic keypresses do NOT trigger compositor
+binds, so `keyboard` is only for shortcuts the focused app handles). After
+actions with delayed effects, block on `wait_for` (window_open,
+title_change) instead of sleeping.
 
 Coordinates: one space everywhere, Hyprland global logical pixels (window
 `at`, cursor, clicks). Screenshots are pixel space: map back with
@@ -59,8 +60,8 @@ READONLY = os.environ.get("HYPRUSE_READONLY", "").lower() in ("1", "true", "yes"
 _READONLY_NOTE = """
 
 READ-ONLY MODE is active: only observation tools are available
-(desktop, screenshot, binds, wait_for). Input and window-management
-tools are disabled by the user."""
+(desktop, screenshot, binds, wait_for). Input, window-management, and
+use_bind are disabled by the user."""
 
 mcp = FastMCP("hypruse", instructions=INSTRUCTIONS + (_READONLY_NOTE if READONLY else ""))
 
@@ -156,10 +157,12 @@ def pointer(
 
 
 def keyboard(action: str, text: str = "", keys: str = "") -> str:
-    """Keyboard to the FOCUSED window (focus via hypr first).
-    action='type' (text, unicode-safe) | 'key' (keys combo:
-    'ctrl+shift+t', 'super+enter', 'esc', 'F5'; aliases
-    enter/esc/tab/backspace/pgup/pgdn/arrows, else XKB keysym names)."""
+    """Keyboard to the FOCUSED APP (focus via hypr first). action='type'
+    (text, unicode-safe) | 'key' (keys combo: 'ctrl+shift+t', 'esc', 'F5';
+    aliases enter/esc/tab/backspace/pgup/pgdn/arrows, else XKB keysyms).
+    This drives shortcuts the focused application handles (ctrl+t, ctrl+l).
+    It does NOT trigger Hyprland's own keybinds (super+...): those go
+    through `use_bind`, and workspace/window actions through `hypr`."""
     safety.touch(f"keyboard:{action}")
     if action == "type":
         if not text:
@@ -317,10 +320,26 @@ Check the install with:  hypruse --version
 def binds() -> list[dict[str, Any]]:
     """The user's own Hyprland keybinds: combo, action, arg, and a
     description when the config provides one. This is how the desktop's
-    owner drives it. Prefer triggering these via the keyboard tool over
-    clicking your way through the same workflow (write SUPER as 'super',
-    e.g. combo SUPER+E means keyboard action='key' keys='super+e')."""
+    owner drives it: to perform one of these workflows, call `use_bind`
+    with the combo (it runs the bound action). NOTE: the `keyboard` tool
+    canNOT trigger these compositor binds (synthetic keys reach apps, not
+    Hyprland's bind matcher), so do not try to press them."""
     return hyprctl.binds()
+
+
+def use_bind(combo: str) -> str:
+    """Run one of the user's own Hyprland keybinds by its combo (from the
+    `binds` tool), e.g. 'SUPER+F'. This executes the bound action directly
+    (the only reliable way: synthetic keypresses do not trigger compositor
+    binds). Use it to drive the owner's configured workflows: launchers,
+    layout shortcuts, scratchpads."""
+    safety.touch("use_bind")
+    bind = hyprctl.find_bind(combo)
+    if bind is None:
+        raise ValueError(f"no keybind {combo!r}; call binds() for the exact combos")
+    action, arg = bind["action"], bind.get("arg", "")
+    hyprctl.dispatch(action, *([arg] if arg else []))
+    return f"ran {bind['combo']}: {action} {arg}".rstrip()
 
 
 _WAIT_EVENTS = {
@@ -329,6 +348,26 @@ _WAIT_EVENTS = {
     "workspace": {"workspace"},
     "title_change": {"windowtitlev2", "windowtitle"},
 }
+
+
+def _already_satisfied(event: str, needle: str) -> dict[str, Any] | None:
+    """Level-triggered pre-check: has the awaited condition already
+    happened? A trigger tool call returns before the agent can call
+    wait_for, so a fast event fires before we subscribe. Checking current
+    state first catches that. Only unambiguous cases: a close is 'already
+    done' if nothing matches; a workspace wait is done if it is active."""
+    if event == "window_close" and needle:
+        for c in hyprctl.query("clients"):
+            hay = f"{c.get('address', '')} {c.get('class', '')} {c.get('title', '')}".lower()
+            if needle in hay:
+                return None  # still open, wait for the real event
+        return {"event": "closewindow", "already": True}
+    if event == "workspace":
+        ws = hyprctl.query("activeworkspace") or {}
+        name = str(ws.get("name", ""))
+        if not needle or needle in name.lower():
+            return {"event": "workspace", "name": name, "already": True}
+    return None
 
 
 @mcp.tool()
@@ -346,6 +385,10 @@ def wait_for(event: str, match: str = "", timeout_s: float = 10) -> dict[str, An
     safety.touch(f"wait_for:{event}")
     timeout_s = min(max(timeout_s, 1.0), 60.0)
     needle = match.lower()
+
+    already = _already_satisfied(event, needle)
+    if already is not None:
+        return already
 
     def matcher(_name: str, payload: dict[str, Any]) -> bool:
         if not needle:
@@ -365,7 +408,7 @@ def wait_for(event: str, match: str = "", timeout_s: float = 10) -> dict[str, An
 # Acting tools register only outside read-only mode; observation tools
 # (desktop, screenshot, binds, wait_for) are decorated above and always on.
 if not READONLY:
-    for _acting_tool in (pointer, keyboard, hypr, launch):
+    for _acting_tool in (pointer, keyboard, hypr, launch, use_bind):
         mcp.tool()(_acting_tool)
 
 

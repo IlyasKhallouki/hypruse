@@ -173,3 +173,15 @@ def parse_binds(raw: list[dict[str, Any]]) -> list[dict[str, Any]]:
 
 def binds() -> list[dict[str, Any]]:
     return parse_binds(query("binds"))
+
+
+def _norm_combo(combo: str) -> str:
+    return combo.upper().replace(" ", "")
+
+
+def find_bind(combo: str) -> dict[str, Any] | None:
+    target = _norm_combo(combo)
+    for b in binds():
+        if _norm_combo(b["combo"]) == target:
+            return b
+    return None
