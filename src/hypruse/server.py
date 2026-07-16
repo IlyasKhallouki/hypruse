@@ -61,34 +61,19 @@ def _prune_shots(d: Path, keep: int = 20) -> None:
 
 @mcp.tool()
 def desktop() -> dict[str, Any]:
-    """Full semantic state of the Hyprland desktop in one call: monitors,
-    workspaces, windows (address, class, title, position `at`, size,
-    workspace), the active window and the cursor position.
-
-    Call this first and after actions that change the desktop. Prefer the
-    `hypr` and `launch` tools for anything window/workspace-shaped — they are
-    instant and exact; use `screenshot` + `pointer`/`keyboard` only to see and
-    operate *inside* an application window. Window `at` + `size` tell you
-    where a window's pixels live in global coordinates.
-    """
+    """Semantic desktop snapshot: monitors, workspaces, windows (address,
+    class, title, `at` + `size` in global coords), active window, cursor.
+    Call first; act on the addresses it returns."""
     return hyprctl.snapshot()
 
 
 @mcp.tool()
 def screenshot(window: str = "", region: str = "", scale: float = 0) -> list[Any]:
-    """See the screen. With no arguments, captures the focused monitor.
-    `window`: "active" or a window address from `desktop` — crops exactly to
-    that window (cheaper and sharper for reading one app). `region`:
-    "x,y,WxH" in global coordinates, for zooming into small details.
-    `scale` (0.1–1.0): optional deliberate downscale — usually leave unset;
-    transport size limits are handled automatically.
-
-    Returns the image (or, in file mode, the saved file's path — READ THAT
-    FILE to see the screen) plus a JSON metadata line. The image is pixel
-    space; convert an image pixel to a clickable global coordinate with:
-    global = geometry[:2] + pixel / scale — using the `scale` value from the
-    metadata, which already folds in any downscaling.
-    """
+    """Capture the focused monitor, a window (`window`: "active" or an
+    address from desktop — cheapest for reading one app), or a `region`
+    "x,y,WxH". Returns the image (or a file path to read) + JSON metadata
+    with geometry/scale for pixel→global mapping. `scale` 0.1–1.0:
+    optional deliberate downscale, usually leave unset."""
     safety.touch("screenshot")
     if os.environ.get("HYPRUSE_SCREENSHOT_MODE", "file") == "image":
         # Fit the transport budget (base64 adds ~33%; Claude Desktop caps
@@ -126,19 +111,10 @@ def pointer(
     scroll_dx: float = 0,
     double: bool = False,
 ) -> str:
-    """Mouse control, in the same global coordinates `desktop` and
-    `screenshot` metadata use. Actions:
-    'move' — place cursor at (x, y).
-    'click' — click `button` (left/right/middle), optionally moving to (x, y)
-    first; set double=true for a double-click.
-    'drag' — hold `button` from (x, y) to (to_x, to_y).
-    'scroll' — wheel by scroll_dy notches (positive scrolls content down),
-    optionally moving to (x, y) first.
-
-    The cursor and keyboard focus are SHARED with the human at the desk:
-    prefer `hypr`/`launch` for window management, keep pointer use inside
-    application windows, and finish what you start.
-    """
+    """Mouse in global coordinates. action='move' (x,y) | 'click' (optional
+    x,y first; button left/right/middle; double=true) | 'drag' (x,y →
+    to_x,to_y holding button) | 'scroll' (scroll_dy notches, positive =
+    content down; optional x,y first)."""
     safety.touch(f"pointer:{action}")
     if action == "move":
         if x is None or y is None:
@@ -159,14 +135,10 @@ def pointer(
 
 @mcp.tool()
 def keyboard(action: str, text: str = "", keys: str = "") -> str:
-    """Keyboard input to the FOCUSED window (focus one first via the `hypr`
-    tool). Actions:
-    'type' — type `text` literally (unicode-safe, layout-correct).
-    'key' — press `keys`, e.g. 'ctrl+shift+t', 'super+enter', 'esc', 'F5'.
-    Modifiers: ctrl, shift, alt, super. Common aliases (enter, esc, tab,
-    backspace, pgup/pgdn, arrows) work; anything else is treated as an XKB
-    keysym name (case-sensitive).
-    """
+    """Keyboard to the FOCUSED window (focus via hypr first).
+    action='type' (text, unicode-safe) | 'key' (keys combo:
+    'ctrl+shift+t', 'super+enter', 'esc', 'F5'; aliases
+    enter/esc/tab/backspace/pgup/pgdn/arrows, else XKB keysym names)."""
     safety.touch(f"keyboard:{action}")
     if action == "type":
         if not text:
@@ -194,16 +166,11 @@ def _addr(target: str) -> str:
 
 @mcp.tool()
 def hypr(action: str, target: str = "", workspace: str = "") -> str:
-    """Native window/workspace management over Hyprland IPC — instant and
-    exact, no vision needed. Actions:
-    'workspace' — switch to `workspace` (a number, a name, or 'special:name').
-    'focus_window' — focus the window `target` (address from desktop()).
-    'move_window' — move window `target` to `workspace` silently (the user's
-    view does not switch).
-    'close_window' — ask window `target` to close (like clicking X).
-    'fullscreen' — toggle fullscreen on `target` (or the active window).
-    'toggle_floating' — toggle floating on `target` (or the active window).
-    """
+    """Window/workspace ops over IPC (instant, no vision).
+    action='workspace' (workspace: number/name/'special:name') |
+    'focus_window' (target: address) | 'move_window' (target + workspace,
+    silent) | 'close_window' (target) | 'fullscreen' (target?) |
+    'toggle_floating' (target?)."""
     safety.touch(f"hypr:{action}")
     if action == "workspace":
         if not workspace:
@@ -248,15 +215,11 @@ def _await_new_window(before: set[str], wait_s: float) -> dict[str, Any] | None:
 
 @mcp.tool()
 def launch(command: str, workspace: str = "", wait_s: float = 8.0) -> dict[str, Any] | str:
-    """Launch an application via Hyprland exec. If `workspace` is given
-    ('3', 'name', 'special:x'), the app ends up there without switching the
-    user's view — including single-instance apps (browsers!) whose window is
-    created by an already-running process and would otherwise ignore the
-    workspace rule: hypruse detects where the window landed and moves it.
-    Waits up to `wait_s` seconds (default 8, max 30 — raise it for slow
-    apps) and returns the new window's address/class/title/workspace so you
-    can focus or screenshot it immediately.
-    """
+    """Run `command` via Hyprland exec. Optional `workspace` placement
+    (silent — works even for single-instance apps like browsers, whose
+    window gets moved after it appears) and `wait_s` (1–30, default 8;
+    raise for slow apps). Returns the new window's
+    address/class/title/workspace, or a timeout note."""
     safety.touch("launch")
     wait_s = min(max(wait_s, 1.0), 30.0)
     before = {c["address"] for c in hyprctl.query("clients")}
