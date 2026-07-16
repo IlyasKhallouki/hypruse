@@ -6,6 +6,12 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Changed
+- Cross-tool guidance moved into MCP server `instructions` (rendered once
+  by clients); tool descriptions cut to terse schemas (~75% smaller,
+  total per-tool payload 5.7 kB → 3.8 kB) so clients load them eagerly
+  instead of deferring them behind a tool-search step.
+
 ### Added
 - Screenshot auto-fit: in image mode, captures fit a transport byte budget
   (`HYPRUSE_MAX_IMAGE_BYTES`, default 700 kB raw ≈ 933 kB base64, sized to
