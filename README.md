@@ -46,7 +46,8 @@ Design decisions:
 | `keyboard` | Type literal text (unicode-safe) or press combos: `ctrl+shift+t`, `super+enter`, `F5` |
 | `hypr` | Switch workspace, focus/move/close windows, fullscreen, floating (pure IPC, milliseconds) |
 | `launch` | Start an app (optionally silent on another workspace), block on its actual `openwindow` event, return its address; detects single-instance apps (browsers) whose window ignores exec rules and moves it to the requested workspace |
-| `binds` | The user's own keybinds, decoded (`SUPER+Q`, action, description) so the agent can drive the desktop through its owner's shortcuts instead of clicking |
+| `binds` | The user's own keybinds, decoded (`SUPER+Q`, action, description); the agent runs one with `use_bind` |
+| `use_bind` | Execute a keybind by combo (`SUPER+F`), running its bound action, so the agent drives the owner's own launchers and shortcuts |
 | `wait_for` | Block on real compositor events (window open/close, workspace change, title change) with a match filter and timeout; replaces sleep-and-hope in multi-step automations |
 
 ## Install

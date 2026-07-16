@@ -6,6 +6,19 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.2.1] - 2026-07-16
+
+### Fixed
+- Keybinds are now run through the new `use_bind` tool (execute a bind's
+  action by combo) instead of synthetic keypresses: Hyprland does not route
+  virtual-keyboard input through its keybind matcher, so `keyboard` combos
+  reach the focused app but never trigger compositor binds like `super+f`.
+  The `binds`/`keyboard` docs and server instructions are corrected to
+  match.
+- `wait_for` pre-checks current state so it does not miss an event that
+  fired before it could subscribe: `window_close` returns immediately when
+  nothing matches, `workspace` when the target is already active.
+
 ## [0.2.0] - 2026-07-16
 
 ### Added
