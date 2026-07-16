@@ -262,9 +262,30 @@ def launch(command: str, workspace: str = "", wait_s: float = 8.0) -> dict[str, 
     return result
 
 
+_INTERACTIVE_HELP = """\
+hypruse {version} — an MCP server, not an interactive program.
+
+It speaks the MCP protocol over stdin/stdout and is meant to be launched by
+an MCP client, so running it directly in a terminal just waits silently for
+a client that never connects (Ctrl+C to quit).
+
+Register it with Claude Code:
+  claude mcp add -s user hypruse -- uvx hypruse
+
+Or set `uvx hypruse` as a stdio server in your MCP client's config.
+Check the install with:  hypruse --version
+"""
+
+
 def main() -> None:
     if "--version" in sys.argv:
         print(f"hypruse {__version__}")
+        return
+    # A human ran it by hand (stdin is a terminal, not a client pipe) — an
+    # MCP stdio client always connects stdin to a pipe, so a TTY here means
+    # nobody is going to talk to us. Explain instead of hanging.
+    if sys.stdin is None or sys.stdin.isatty():
+        print(_INTERACTIVE_HELP.format(version=__version__), file=sys.stderr)
         return
     session.ensure_session_env()
     safety.init()
