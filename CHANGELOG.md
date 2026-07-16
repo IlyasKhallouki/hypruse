@@ -13,6 +13,13 @@ All notable changes to this project are documented here. The format follows
   instead of deferring them behind a tool-search step.
 
 ### Added
+- Screenshot metadata now reports the true output dimensions (`image`
+  [w,h]); image mode caps the long edge (`HYPRUSE_MAX_IMAGE_EDGE`, default
+  1568) so the API never silently downscales a capture *under* the model
+  and desyncs the coordinate mapping — a systematic click-accuracy bug on
+  models with a smaller image limit. Server instructions now teach
+  coarse-to-fine clicking (zoom into a region, estimate by proportion,
+  verify) to fix the residual pixel-estimation error.
 - Screenshot auto-fit: in image mode, captures fit a transport byte budget
   (`HYPRUSE_MAX_IMAGE_BYTES`, default 700 kB raw ≈ 933 kB base64, sized to
   Claude Desktop's 1 MB result cap) by degrading format before resolution
