@@ -65,6 +65,24 @@ claude mcp add -s user hypruse -- uv run --directory /path/to/hypruse hypruse
 
 Any other MCP client: run `uvx hypruse` as a stdio server.
 
+### Claude Desktop (Linux beta)
+
+The Linux beta ships **without** Anthropic's first-party computer use — but stdio MCP servers work in chat, which makes hypruse the workaround. In `~/.config/Claude/claude_desktop_config.json`:
+
+```json
+{
+  "mcpServers": {
+    "hypruse": {
+      "command": "uvx",
+      "args": ["hypruse"],
+      "env": { "HYPRUSE_SCREENSHOT_MODE": "image" }
+    }
+  }
+}
+```
+
+Two Desktop-specific notes: use `image` mode (Desktop renders inline MCP images and has no file-read tool), and the app must run natively inside your Hyprland session so the server inherits `WAYLAND_DISPLAY`/`HYPRLAND_INSTANCE_SIGNATURE` — from a VM or container it cannot reach your compositor. If your Desktop install bypasses tool-approval prompts, treat the [Waybar indicator + panic keybind](waybar/) as mandatory, not optional.
+
 ## Security model
 
 Read this section before installing. **hypruse hands an agent your mouse, your keyboard, your screen contents, and an app launcher.** The layers that keep that sane:
