@@ -4,6 +4,8 @@
 
 No ydotool daemon. No root. No portals. No X11.
 
+![Claude reading the desktop over IPC, switching to btop on another workspace, and reporting back](https://raw.githubusercontent.com/IlyasKhallouki/hypruse/main/assets/demo.gif)
+
 ## Why
 
 Computer use exists on macOS and Windows. On Linux there is effectively nothing: the Claude Desktop Linux beta explicitly ships **without** screen control, Anthropic's reference implementation is an X11 container, and the existing Wayland attempts lean on setuid uinput hacks or GNOME-only portals.
