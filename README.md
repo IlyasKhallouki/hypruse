@@ -135,12 +135,21 @@ The input e2e is deliberately manual — it borrows your cursor and keyboard, co
 
 ## Roadmap
 
-- [ ] PyPI + AUR packaging
-- [ ] sway / niri support — the wire client already speaks the same wlr protocols; mostly needs their IPC equivalents (PRs very welcome)
+**Now — distribution**
+- [ ] PyPI (`uvx hypruse`) and AUR (`hypruse`, `hypruse-git`)
+- [ ] Demo GIF, then `awesome-mcp-servers` / `awesome-hyprland` listings
+
+**Next — trust & accuracy**
+- [ ] `hypruse doctor` — first-run diagnostics (deps, session reachability, virtual-pointer handshake)
+- [ ] Click-by-text via OCR (Tesseract) — click labels, not estimated pixels; works on any app
+- [ ] Read-only mode — disable input tools for a safe first run
+- [ ] Headless-Hyprland CI — real end-to-end tests in GitHub Actions
+
+**Then — breadth & depth**
+- [ ] sway / niri support — the wire client already speaks the wlr protocols; needs an IPC layer alongside `hyprctl.py` (PRs very welcome, `help wanted`)
+- [ ] AT-SPI element tree — click by accessible name, read GTK/Qt UIs without vision
+- [ ] Clipboard (`wl-clipboard`), settle / wait-for-stable, discrete-axis scroll
 - [ ] Multi-monitor and fractional-scaling hardening
-- [ ] High-resolution / discrete axis scroll
-- [ ] AT-SPI text extraction — read GTK/Qt UIs without vision
-- [ ] Headless-Hyprland container for CI e2e
 
 ## Alternatives, honestly
 
