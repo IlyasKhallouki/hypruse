@@ -45,7 +45,7 @@ Design choices, defended:
 | `pointer` | move / click / drag / scroll in global coordinates |
 | `keyboard` | Type literal text (unicode-safe) or press combos: `ctrl+shift+t`, `super+enter`, `F5` |
 | `hypr` | Switch workspace, focus/move/close windows, fullscreen, floating — pure IPC, milliseconds |
-| `launch` | Start an app (optionally silent on another workspace), wait for its window, return its address |
+| `launch` | Start an app (optionally silent on another workspace), wait for its window, return its address — detects single-instance apps (browsers) whose window ignores exec rules, and moves it to the requested workspace |
 
 ## Install
 
@@ -74,6 +74,27 @@ Read this section before installing. **hypruse hands an agent your mouse, your k
 3. **Interruption** — click the indicator, or bind a panic key: `bind = SUPER SHIFT, BackSpace, exec, pkill -f hypruse`. Killing it mid-action is safe: button press/release pairs never span tool calls, so it cannot die holding a button.
 4. **The seat is shared.** There is one cursor and one keyboard focus, and Hyprland's focus-follows-mouse means a cursor move alone can retarget keystrokes. Don't type while an agent is driving — watch the indicator.
 5. **Scope** — stdio only (no network listener), no clipboard access, nothing persisted except the beacon. A screenshot sees everything visible: treat an agent session like screen sharing.
+
+## Performance
+
+Measured on a live session (Hyprland 0.55, 1080p, 20 windows): `desktop`
+~30 ms, workspace/window dispatch ~10–20 ms, screenshots ~0.5 s. If tool
+calls *feel* slow, it is almost certainly the MCP **approval prompt** in
+front of each call, not the server — allowlist the tools you trust and the
+latency disappears. Claude Code (`.claude/settings.json`):
+
+```jsonc
+{
+  "permissions": {
+    "allow": [
+      "mcp__hypruse__desktop",
+      "mcp__hypruse__screenshot",
+      "mcp__hypruse__hypr"
+      // add pointer/keyboard/launch once you trust your workflows
+    ]
+  }
+}
+```
 
 ## Coordinates
 

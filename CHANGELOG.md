@@ -6,6 +6,19 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Fixed
+- `launch`: single-instance apps (e.g. browsers) open their window from an
+  existing process and ignore `[workspace N silent]` exec rules — the
+  window is now detected wherever it lands and moved to the requested
+  workspace. Detection window is `wait_s` (default 8 s, was a fixed 3 s).
+  Found in the first real-world test drive.
+- Stored screenshots are pruned to the 20 newest (XDG_RUNTIME_DIR is
+  tmpfs/RAM).
+
+### Docs
+- Performance notes: measured server latencies and the permission-prompt
+  effect, with a Claude Code allowlist example.
+
 ## [0.1.0] — 2026-07-16
 
 Initial release.
