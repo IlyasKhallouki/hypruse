@@ -123,3 +123,53 @@ def snapshot() -> dict[str, Any]:
         query("activewindow") or None,
         cursor_pos(),
     )
+
+
+# X11 modifier bits as Hyprland reports them in `binds` modmask
+_MOD_BITS = (
+    (64, "SUPER"),
+    (4, "CTRL"),
+    (1, "SHIFT"),
+    (8, "ALT"),
+    (2, "CAPS"),
+    (16, "MOD2"),
+    (32, "MOD3"),
+    (128, "MOD5"),
+)
+
+
+def modmask_to_names(mask: int) -> list[str]:
+    return [name for bit, name in _MOD_BITS if mask & bit]
+
+
+def parse_binds(raw: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Trim hyprctl's bind records to what an agent can actually use.
+
+    Mouse binds are dropped (not reproducible through the keyboard tool);
+    keycode-only binds keep a code: marker so they are at least visible.
+    """
+    out: list[dict[str, Any]] = []
+    for b in raw:
+        if b.get("mouse"):
+            continue
+        key = b.get("key") or ""
+        if not key and b.get("keycode"):
+            key = f"code:{b['keycode']}"
+        if not key:
+            continue
+        combo = "+".join([*modmask_to_names(int(b.get("modmask", 0))), key])
+        entry: dict[str, Any] = {
+            "combo": combo,
+            "action": b.get("dispatcher", ""),
+            "arg": b.get("arg", ""),
+        }
+        if b.get("description"):
+            entry["description"] = b["description"]
+        if b.get("submap"):
+            entry["submap"] = b["submap"]
+        out.append(entry)
+    return out
+
+
+def binds() -> list[dict[str, Any]]:
+    return parse_binds(query("binds"))

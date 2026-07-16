@@ -31,7 +31,10 @@ hypruse controls a live Hyprland desktop. Workflow: call `desktop` first
 and prefer `hypr`/`launch` (IPC, instant and exact) for anything window-
 or workspace-shaped; use `screenshot` + `pointer`/`keyboard` only to see
 and operate inside application windows; call `desktop` again to verify
-effects.
+effects. `binds` lists the owner's own keybinds: when one matches the
+task (launchers, app shortcuts), trigger it via `keyboard` instead of
+clicking. After actions with delayed effects, block on `wait_for`
+(window_open, title_change) instead of sleeping.
 
 Coordinates: one space everywhere, Hyprland global logical pixels (window
 `at`, cursor, clicks). Screenshots are pixel space: map back with
@@ -304,6 +307,16 @@ Register it with Claude Code:
 Or set `uvx hypruse` as a stdio server in your MCP client's config.
 Check the install with:  hypruse --version
 """
+
+
+@mcp.tool()
+def binds() -> list[dict[str, Any]]:
+    """The user's own Hyprland keybinds: combo, action, arg, and a
+    description when the config provides one. This is how the desktop's
+    owner drives it. Prefer triggering these via the keyboard tool over
+    clicking your way through the same workflow (write SUPER as 'super',
+    e.g. combo SUPER+E means keyboard action='key' keys='super+e')."""
+    return hyprctl.binds()
 
 
 _WAIT_EVENTS = {
