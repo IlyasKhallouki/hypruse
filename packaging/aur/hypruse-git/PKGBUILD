@@ -1,7 +1,7 @@
 # Maintainer: Ilyas Khallouki <khalloukielias@gmail.com>
 pkgname=hypruse-git
 _pkgname=hypruse
-pkgver=0.1.0
+pkgver=0.1.2
 pkgrel=1
 pkgdesc="Computer use for Hyprland, an MCP server giving AI agents native control of a Wayland desktop (git)"
 arch=('any')
