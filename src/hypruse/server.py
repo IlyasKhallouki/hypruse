@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import sys
 import time
 from pathlib import Path
@@ -131,6 +132,85 @@ def keyboard(action: str, text: str = "", keys: str = "") -> str:
         hinput.key_combo(keys)
         return f"pressed {keys}"
     raise ValueError(f"unknown action {action!r}: type|key")
+
+
+_ADDR = re.compile(r"^0x[0-9a-fA-F]+$")
+
+
+def _addr(target: str) -> str:
+    if not _ADDR.match(target):
+        raise ValueError(
+            f"{target!r} is not a window address — use the `address` field from desktop()"
+        )
+    return f"address:{target}"
+
+
+@mcp.tool()
+def hypr(action: str, target: str = "", workspace: str = "") -> str:
+    """Native window/workspace management over Hyprland IPC — instant and
+    exact, no vision needed. Actions:
+    'workspace' — switch to `workspace` (a number, a name, or 'special:name').
+    'focus_window' — focus the window `target` (address from desktop()).
+    'move_window' — move window `target` to `workspace` silently (the user's
+    view does not switch).
+    'close_window' — ask window `target` to close (like clicking X).
+    'fullscreen' — toggle fullscreen on `target` (or the active window).
+    'toggle_floating' — toggle floating on `target` (or the active window).
+    """
+    if action == "workspace":
+        if not workspace:
+            raise ValueError("workspace action needs `workspace`")
+        hyprctl.dispatch("workspace", workspace)
+        return f"on workspace {workspace}"
+    if action == "focus_window":
+        hyprctl.dispatch("focuswindow", _addr(target))
+        return f"focused {target}"
+    if action == "move_window":
+        if not workspace:
+            raise ValueError("move_window needs `workspace`")
+        hyprctl.dispatch("movetoworkspacesilent", f"{workspace},{_addr(target)}")
+        return f"moved {target} to workspace {workspace}"
+    if action == "close_window":
+        hyprctl.dispatch("closewindow", _addr(target))
+        return f"asked {target} to close"
+    if action == "fullscreen":
+        if target:
+            hyprctl.dispatch("focuswindow", _addr(target))
+        hyprctl.dispatch("fullscreen", "0")
+        return "fullscreen toggled"
+    if action == "toggle_floating":
+        args = (_addr(target),) if target else ()
+        hyprctl.dispatch("togglefloating", *args)
+        return "floating toggled"
+    raise ValueError(
+        f"unknown action {action!r}: workspace|focus_window|move_window|"
+        "close_window|fullscreen|toggle_floating"
+    )
+
+
+@mcp.tool()
+def launch(command: str, workspace: str = "") -> dict[str, Any] | str:
+    """Launch an application via Hyprland exec. If `workspace` is given
+    ('3', 'name', 'special:x'), the app opens there silently without
+    switching the user's view. Waits up to 3s for the new window and returns
+    its address/class/title/workspace so you can focus or screenshot it
+    immediately.
+    """
+    before = {c["address"] for c in hyprctl.query("clients")}
+    rule = f"[workspace {workspace} silent] " if workspace else ""
+    hyprctl.dispatch("exec", rule + command)
+    deadline = time.time() + 3.0
+    while time.time() < deadline:
+        time.sleep(0.15)
+        for c in hyprctl.query("clients"):
+            if c["address"] not in before:
+                return {
+                    "address": c["address"],
+                    "class": c.get("class", ""),
+                    "title": c.get("title", ""),
+                    "workspace": c.get("workspace", {}).get("id"),
+                }
+    return "launched, but no new window appeared within 3s — check desktop()"
 
 
 def main() -> None:
