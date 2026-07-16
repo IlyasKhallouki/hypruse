@@ -7,6 +7,11 @@ All notable changes to this project are documented here. The format follows
 ## [Unreleased]
 
 ### Fixed
+- Session discovery: when the host app launches hypruse with a stripped
+  environment (dbus/systemd-activated desktop apps), the server now finds
+  `HYPRLAND_INSTANCE_SIGNATURE` and `WAYLAND_DISPLAY` from their sockets
+  under `XDG_RUNTIME_DIR` instead of failing with "is hyprland running?".
+  Existing env is never overridden; newest live instance wins.
 - `launch`: single-instance apps (e.g. browsers) open their window from an
   existing process and ignore `[workspace N silent]` exec rules — the
   window is now detected wherever it lands and moved to the requested

@@ -21,7 +21,7 @@ from typing import Any
 from mcp.server.fastmcp import FastMCP
 from mcp.server.fastmcp import Image as MCPImage
 
-from hypruse import __version__, hyprctl, safety
+from hypruse import __version__, hyprctl, safety, session
 from hypruse import input as hinput
 from hypruse import screenshot as shot
 
@@ -257,6 +257,7 @@ def main() -> None:
     if "--version" in sys.argv:
         print(f"hypruse {__version__}")
         return
+    session.ensure_session_env()
     safety.init()
     mcp.run()
 

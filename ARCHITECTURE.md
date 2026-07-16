@@ -11,6 +11,8 @@ src/hypruse/
   wire.py        raw Wayland client for zwlr_virtual_pointer_v1
   input.py       pointer orchestration (movecursor + wire) and wtype keyboard
   screenshot.py  grim capture: monitor / window / region + coord metadata
+  session.py     discovers HYPRLAND_INSTANCE_SIGNATURE / WAYLAND_DISPLAY
+                 from runtime-dir sockets when the host stripped the env
   safety.py      activity beacon + kill-switch semantics
 ```
 
