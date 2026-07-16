@@ -26,7 +26,7 @@ class FakeGrim:
 def test_native_png_when_it_fits(monkeypatch):
     fake = FakeGrim({("png", None): 500_000})
     monkeypatch.setattr(screenshot, "_grim", fake)
-    data, fmt, applied = screenshot._grab_fitting(["-o", "eDP-1"], 0, 700_000)
+    data, fmt, applied = screenshot._grab_fitting(["-o", "eDP-1"], 1.0, 700_000)
     assert (fmt, applied, len(data)) == ("png", 1.0, 500_000)
     assert fake.calls == [("png", None)]
 
@@ -34,7 +34,7 @@ def test_native_png_when_it_fits(monkeypatch):
 def test_degrades_format_before_resolution(monkeypatch):
     fake = FakeGrim({("png", None): 900_000, ("jpeg", None): 330_000})
     monkeypatch.setattr(screenshot, "_grim", fake)
-    data, fmt, applied = screenshot._grab_fitting(["-o", "eDP-1"], 0, 700_000)
+    data, fmt, applied = screenshot._grab_fitting(["-o", "eDP-1"], 1.0, 700_000)
     assert (fmt, applied) == ("jpeg", 1.0)
     assert fake.calls == [("png", None), ("jpeg", None)]
 
@@ -48,7 +48,7 @@ def test_downscales_when_format_is_not_enough(monkeypatch):
         }
     )
     monkeypatch.setattr(screenshot, "_grim", fake)
-    _, fmt, applied = screenshot._grab_fitting(["-o", "eDP-1"], 0, 700_000)
+    _, fmt, applied = screenshot._grab_fitting(["-o", "eDP-1"], 1.0, 700_000)
     assert (fmt, applied) == ("jpeg", 0.75)
 
 
@@ -63,13 +63,13 @@ def test_errors_when_nothing_fits(monkeypatch):
     )
     monkeypatch.setattr(screenshot, "_grim", fake)
     with pytest.raises(screenshot.ScreenshotError, match="window or region"):
-        screenshot._grab_fitting(["-o", "eDP-1"], 0, 700_000)
+        screenshot._grab_fitting(["-o", "eDP-1"], 1.0, 700_000)
 
 
 def test_no_budget_returns_native(monkeypatch):
     fake = FakeGrim({("png", None): 50_000_000})
     monkeypatch.setattr(screenshot, "_grim", fake)
-    _, fmt, applied = screenshot._grab_fitting(["-o", "eDP-1"], 0, None)
+    _, fmt, applied = screenshot._grab_fitting(["-o", "eDP-1"], 1.0, None)
     assert (fmt, applied) == ("png", 1.0)
     assert len(fake.calls) == 1
 
@@ -95,9 +95,11 @@ def test_capture_folds_applied_scale_into_meta(monkeypatch):
     )
     fake = FakeGrim({("png", None): 2_000_000, ("jpeg", None): 900_000, ("jpeg", "0.75"): 400_000})
     monkeypatch.setattr(screenshot, "_grim", fake)
+    monkeypatch.setattr(screenshot, "image_size", lambda data: (1440, 810))
     _, meta = screenshot.capture(max_bytes=700_000)
     assert meta["format"] == "jpeg"
     assert meta["scale"] == pytest.approx(1.25 * 0.75)
+    assert meta["image"] == [1440, 810]
 
 
 def test_capture_rejects_bad_scale():
