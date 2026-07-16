@@ -192,30 +192,55 @@ def hypr(action: str, target: str = "", workspace: str = "") -> str:
     )
 
 
-@mcp.tool()
-def launch(command: str, workspace: str = "") -> dict[str, Any] | str:
-    """Launch an application via Hyprland exec. If `workspace` is given
-    ('3', 'name', 'special:x'), the app opens there silently without
-    switching the user's view. Waits up to 3s for the new window and returns
-    its address/class/title/workspace so you can focus or screenshot it
-    immediately.
-    """
-    safety.touch("launch")
-    before = {c["address"] for c in hyprctl.query("clients")}
-    rule = f"[workspace {workspace} silent] " if workspace else ""
-    hyprctl.dispatch("exec", rule + command)
-    deadline = time.time() + 3.0
-    while time.time() < deadline:
+def _await_new_window(before: set[str], wait_s: float) -> dict[str, Any] | None:
+    deadline = time.monotonic() + wait_s
+    while time.monotonic() < deadline:
         time.sleep(0.15)
         for c in hyprctl.query("clients"):
             if c["address"] not in before:
-                return {
-                    "address": c["address"],
-                    "class": c.get("class", ""),
-                    "title": c.get("title", ""),
-                    "workspace": c.get("workspace", {}).get("id"),
-                }
-    return "launched, but no new window appeared within 3s — check desktop()"
+                return c
+    return None
+
+
+@mcp.tool()
+def launch(command: str, workspace: str = "", wait_s: float = 8.0) -> dict[str, Any] | str:
+    """Launch an application via Hyprland exec. If `workspace` is given
+    ('3', 'name', 'special:x'), the app ends up there without switching the
+    user's view — including single-instance apps (browsers!) whose window is
+    created by an already-running process and would otherwise ignore the
+    workspace rule: hypruse detects where the window landed and moves it.
+    Waits up to `wait_s` seconds (default 8, max 30 — raise it for slow
+    apps) and returns the new window's address/class/title/workspace so you
+    can focus or screenshot it immediately.
+    """
+    safety.touch("launch")
+    wait_s = min(max(wait_s, 1.0), 30.0)
+    before = {c["address"] for c in hyprctl.query("clients")}
+    rule = f"[workspace {workspace} silent] " if workspace else ""
+    hyprctl.dispatch("exec", rule + command)
+    win = _await_new_window(before, wait_s)
+    if win is None:
+        return (
+            f"launched, but no new window appeared within {wait_s:.0f}s — slow or "
+            "single-instance apps may open late and on their own workspace; call "
+            "desktop() to find the window, then hypr move_window if needed"
+        )
+    ws = win.get("workspace", {})
+    result: dict[str, Any] = {
+        "address": win["address"],
+        "class": win.get("class", ""),
+        "title": win.get("title", ""),
+        "workspace": ws.get("id"),
+    }
+    landed = {str(ws.get("id")), str(ws.get("name", ""))}
+    if workspace and workspace not in landed:
+        hyprctl.dispatch("movetoworkspacesilent", f"{workspace},address:{win['address']}")
+        result["workspace"] = workspace
+        result["note"] = (
+            "window opened elsewhere (single-instance app behavior); "
+            "moved to the requested workspace"
+        )
+    return result
 
 
 def main() -> None:
