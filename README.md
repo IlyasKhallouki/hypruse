@@ -4,8 +4,6 @@
 
 No ydotool daemon. No root. No portals. No X11.
 
-<!-- demo: assets/demo.gif goes here before launch -->
-
 ## Why
 
 Computer use exists on macOS and Windows. On Linux there is effectively nothing: the Claude Desktop Linux beta explicitly ships **without** screen control, Anthropic's reference implementation is an X11 container, and the existing Wayland attempts lean on setuid uinput hacks or GNOME-only portals.
@@ -135,21 +133,14 @@ The input e2e is deliberately manual: it borrows your cursor and keyboard, count
 
 ## Roadmap
 
-**Now: distribution**
-- [ ] PyPI (`uvx hypruse`) and AUR (`hypruse`, `hypruse-git`)
-- [ ] Demo GIF, then `awesome-mcp-servers` / `awesome-hyprland` listings
-
-**Next: trust & accuracy**
-- [ ] `hypruse doctor`: first-run diagnostics (deps, session reachability, virtual-pointer handshake)
-- [ ] Click-by-text via OCR (Tesseract): click labels, not estimated pixels; works on any app
-- [ ] Read-only mode: disable input tools for a safe first run
-- [ ] Headless-Hyprland CI: real end-to-end tests in GitHub Actions
-
-**Then: breadth & depth**
-- [ ] sway / niri support: the wire client already speaks the wlr protocols; needs an IPC layer alongside `hyprctl.py` (PRs very welcome, `help wanted`)
-- [ ] AT-SPI element tree: click by accessible name, read GTK/Qt UIs without vision
-- [ ] Clipboard (`wl-clipboard`), settle / wait-for-stable, discrete-axis scroll
-- [ ] Multi-monitor and fractional-scaling hardening
+- `hypruse doctor`: first-run diagnostics (dependencies, session reachability, virtual-pointer handshake)
+- Click-by-text via OCR (Tesseract): click labels instead of estimated pixels, in any app
+- Read-only mode: disable the input tools for a safe first run
+- Headless-Hyprland end-to-end tests in CI
+- sway / niri support: the wire client already speaks the wlr protocols; what remains is an IPC layer alongside `hyprctl.py` (contributions welcome)
+- AT-SPI element tree: click by accessible name, read GTK/Qt UIs without vision
+- Clipboard integration, wait-for-stable capture, discrete-axis scroll
+- Multi-monitor and fractional-scaling hardening
 
 ## Alternatives, honestly
 
