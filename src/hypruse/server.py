@@ -56,18 +56,18 @@ def screenshot(window: str = "", region: str = "") -> list[Any]:
     that window (cheaper and sharper for reading one app). `region`:
     "x,y,WxH" in global coordinates, for zooming into small details.
 
-    Returns the image plus a JSON metadata line. The image is in pixel
-    space; convert an image pixel to a clickable global coordinate with:
-    global = geometry[:2] + pixel / scale (scale is 1.0 unless the monitor
-    uses fractional scaling).
+    Returns the saved PNG's path (READ THAT FILE to see the screen) plus a
+    JSON metadata line. The image is in pixel space; convert an image pixel
+    to a clickable global coordinate with: global = geometry[:2] + pixel /
+    scale (scale is 1.0 unless the monitor uses fractional scaling).
     """
     safety.touch("screenshot")
     png, meta = shot.capture(window, region)
-    if os.environ.get("HYPRUSE_SCREENSHOT_MODE", "image") == "file":
-        path = _runtime_dir() / f"shot-{int(time.time() * 1000)}.png"
-        path.write_bytes(png)
-        return [f"screenshot written to {path} — read that file to view it", json.dumps(meta)]
-    return [MCPImage(data=png, format="png"), json.dumps(meta)]
+    if os.environ.get("HYPRUSE_SCREENSHOT_MODE", "file") == "image":
+        return [MCPImage(data=png, format="png"), json.dumps(meta)]
+    path = _runtime_dir() / f"shot-{int(time.time() * 1000)}.png"
+    path.write_bytes(png)
+    return [f"screenshot written to {path} — read that file to view it", json.dumps(meta)]
 
 
 @mcp.tool()
