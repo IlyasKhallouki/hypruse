@@ -56,8 +56,8 @@ def test_screenshot_roundtrip_file_mode():
     result = call("screenshot", {}, "file")
     assert not result.isError, result.content
     texts = [c.text for c in result.content if isinstance(c, TextContent)]
-    assert any("screenshot written to" in t for t in texts)
-    path = texts[0].split(" ")[3]
+    assert any("screenshot saved" in t for t in texts)
+    path = texts[0].split()[-1]  # path is the final token, nothing after it
     with open(path, "rb") as f:
         assert f.read(8) == PNG_MAGIC
 

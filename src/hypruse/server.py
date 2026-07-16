@@ -116,7 +116,7 @@ def screenshot(window: str = "", region: str = "", scale: float = 0) -> list[Any
     _prune_shots(d)
     return [
         TextContent(
-            type="text", text=f"screenshot written to {path}, read that file to view it"
+            type="text", text=f"screenshot saved, read this file to view the screen: {path}"
         ),
         TextContent(type="text", text=json.dumps(meta)),
     ]
