@@ -139,7 +139,9 @@ The input e2e is deliberately manual: it borrows your cursor and keyboard, count
 
 ## Roadmap
 
-- `hypruse doctor`: first-run diagnostics (dependencies, session reachability, virtual-pointer handshake)
+- `hypruse init` and `hypruse doctor`: one-command setup (detect the MCP client, register the server, verify dependencies and session reachability) and first-run diagnostics
+- Keybind awareness: expose the user's own Hyprland binds so the agent can drive the desktop the way its owner does, instead of clicking
+- Event-driven waits: subscribe to Hyprland's event socket so launch and window operations wait on real events instead of polling
 - Click-by-text via OCR (Tesseract): click labels instead of estimated pixels, in any app
 - Read-only mode: disable the input tools for a safe first run
 - Headless-Hyprland end-to-end tests in CI
