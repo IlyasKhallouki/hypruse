@@ -54,7 +54,15 @@ should change something, screenshot again to confirm before continuing.
 The cursor and keyboard focus are SHARED with the human at the desk:
 finish what you start, and expect every action to be visible."""
 
-mcp = FastMCP("hypruse", instructions=INSTRUCTIONS)
+READONLY = os.environ.get("HYPRUSE_READONLY", "").lower() in ("1", "true", "yes", "on")
+
+_READONLY_NOTE = """
+
+READ-ONLY MODE is active: only observation tools are available
+(desktop, screenshot, binds, wait_for). Input and window-management
+tools are disabled by the user."""
+
+mcp = FastMCP("hypruse", instructions=INSTRUCTIONS + (_READONLY_NOTE if READONLY else ""))
 
 
 def _runtime_dir() -> Path:
@@ -114,7 +122,6 @@ def screenshot(window: str = "", region: str = "", scale: float = 0) -> list[Any
     ]
 
 
-@mcp.tool()
 def pointer(
     action: str,
     x: float | None = None,
@@ -148,7 +155,6 @@ def pointer(
     return f"{action} ok; cursor now at {hyprctl.cursor_pos()}"
 
 
-@mcp.tool()
 def keyboard(action: str, text: str = "", keys: str = "") -> str:
     """Keyboard to the FOCUSED window (focus via hypr first).
     action='type' (text, unicode-safe) | 'key' (keys combo:
@@ -179,7 +185,6 @@ def _addr(target: str) -> str:
     return f"address:{target}"
 
 
-@mcp.tool()
 def hypr(action: str, target: str = "", workspace: str = "") -> str:
     """Window/workspace ops over IPC (instant, no vision).
     action='workspace' (workspace: number/name/'special:name') |
@@ -259,7 +264,6 @@ def _launch_and_wait(rule_command: str, wait_s: float) -> dict[str, Any] | None:
     return win
 
 
-@mcp.tool()
 def launch(command: str, workspace: str = "", wait_s: float = 8.0) -> dict[str, Any] | str:
     """Run `command` via Hyprland exec. Optional `workspace` placement
     (silent, works even for single-instance apps like browsers, whose
@@ -356,6 +360,13 @@ def wait_for(event: str, match: str = "", timeout_s: float = 10) -> dict[str, An
     if hit is None:
         return f"timeout: no matching {event} event within {timeout_s:.0f}s"
     return {"event": hit[0], **hit[1]}
+
+
+# Acting tools register only outside read-only mode; observation tools
+# (desktop, screenshot, binds, wait_for) are decorated above and always on.
+if not READONLY:
+    for _acting_tool in (pointer, keyboard, hypr, launch):
+        mcp.tool()(_acting_tool)
 
 
 def main() -> None:
