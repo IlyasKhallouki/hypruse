@@ -9,14 +9,27 @@ the same space cursorpos, window `at`, and movecursor use.
 
 from __future__ import annotations
 
+import json
+import os
 import sys
+import time
+from pathlib import Path
 from typing import Any
 
 from mcp.server.fastmcp import FastMCP
+from mcp.server.fastmcp import Image as MCPImage
 
 from hypruse import __version__, hyprctl
+from hypruse import screenshot as shot
 
 mcp = FastMCP("hypruse")
+
+
+def _runtime_dir() -> Path:
+    base = os.environ.get("XDG_RUNTIME_DIR", "/tmp")
+    d = Path(base) / "hypruse"
+    d.mkdir(parents=True, exist_ok=True)
+    return d
 
 
 @mcp.tool()
@@ -32,6 +45,26 @@ def desktop() -> dict[str, Any]:
     where a window's pixels live in global coordinates.
     """
     return hyprctl.snapshot()
+
+
+@mcp.tool()
+def screenshot(window: str = "", region: str = "") -> list[Any]:
+    """See the screen. With no arguments, captures the focused monitor.
+    `window`: "active" or a window address from `desktop` — crops exactly to
+    that window (cheaper and sharper for reading one app). `region`:
+    "x,y,WxH" in global coordinates, for zooming into small details.
+
+    Returns the image plus a JSON metadata line. The image is in pixel
+    space; convert an image pixel to a clickable global coordinate with:
+    global = geometry[:2] + pixel / scale (scale is 1.0 unless the monitor
+    uses fractional scaling).
+    """
+    png, meta = shot.capture(window, region)
+    if os.environ.get("HYPRUSE_SCREENSHOT_MODE", "image") == "file":
+        path = _runtime_dir() / f"shot-{int(time.time() * 1000)}.png"
+        path.write_bytes(png)
+        return [f"screenshot written to {path} — read that file to view it", json.dumps(meta)]
+    return [MCPImage(data=png, format="png"), json.dumps(meta)]
 
 
 def main() -> None:
