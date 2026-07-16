@@ -45,7 +45,9 @@ Design decisions:
 | `pointer` | move / click / drag / scroll in global coordinates |
 | `keyboard` | Type literal text (unicode-safe) or press combos: `ctrl+shift+t`, `super+enter`, `F5` |
 | `hypr` | Switch workspace, focus/move/close windows, fullscreen, floating (pure IPC, milliseconds) |
-| `launch` | Start an app (optionally silent on another workspace), wait for its window, return its address; detects single-instance apps (browsers) whose window ignores exec rules and moves it to the requested workspace |
+| `launch` | Start an app (optionally silent on another workspace), block on its actual `openwindow` event, return its address; detects single-instance apps (browsers) whose window ignores exec rules and moves it to the requested workspace |
+| `binds` | The user's own keybinds, decoded (`SUPER+Q`, action, description) so the agent can drive the desktop through its owner's shortcuts instead of clicking |
+| `wait_for` | Block on real compositor events (window open/close, workspace change, title change) with a match filter and timeout; replaces sleep-and-hope in multi-step automations |
 
 ## Install
 
@@ -57,7 +59,14 @@ Arch Linux, from the [AUR](https://aur.archlinux.org/packages/hypruse):
 yay -S hypruse        # or hypruse-git for main
 ```
 
-Claude Code:
+Then let it set itself up and verify the environment:
+
+```sh
+hypruse init     # detects your MCP clients, registers (asks first), runs doctor
+hypruse doctor   # just the diagnostics
+```
+
+Manual registration, Claude Code:
 
 ```sh
 claude mcp add -s user hypruse -- uvx hypruse
@@ -70,6 +79,8 @@ claude mcp add -s user hypruse -- uv run --directory /path/to/hypruse hypruse
 ```
 
 Any other MCP client: run `uvx hypruse` as a stdio server.
+
+**Read-only mode:** set `HYPRUSE_READONLY=1` in the server config to expose only the observation tools (`desktop`, `screenshot`, `binds`, `wait_for`). The agent can see and narrate but cannot click, type, or launch. A good first week.
 
 ### Claude Desktop (Linux beta)
 
@@ -141,11 +152,7 @@ The input e2e is deliberately manual: it borrows your cursor and keyboard, count
 
 ## Roadmap
 
-- `hypruse init` and `hypruse doctor`: one-command setup (detect the MCP client, register the server, verify dependencies and session reachability) and first-run diagnostics
-- Keybind awareness: expose the user's own Hyprland binds so the agent can drive the desktop the way its owner does, instead of clicking
-- Event-driven waits: subscribe to Hyprland's event socket so launch and window operations wait on real events instead of polling
 - Click-by-text via OCR (Tesseract): click labels instead of estimated pixels, in any app
-- Read-only mode: disable the input tools for a safe first run
 - Headless-Hyprland end-to-end tests in CI
 - sway / niri support: the wire client already speaks the wlr protocols; what remains is an IPC layer alongside `hyprctl.py` (contributions welcome)
 - AT-SPI element tree: click by accessible name, read GTK/Qt UIs without vision

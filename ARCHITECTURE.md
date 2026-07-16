@@ -6,8 +6,11 @@ Ten-minute orientation for contributors.
 
 ```
 src/hypruse/
-  server.py      MCP wiring: 6 tools, docstrings = the agent-facing API
-  hyprctl.py     all Hyprland IPC (queries + dispatchers), state trimming
+  cli.py         entry point: server by default, doctor / init subcommands
+  server.py      MCP wiring: 8 tools, docstrings = the agent-facing API
+  hyprctl.py     all Hyprland IPC (queries + dispatchers), state trimming,
+                 keybind decoding
+  events.py      socket2 event stream: parser + wait primitive
   wire.py        raw Wayland client for zwlr_virtual_pointer_v1
   input.py       pointer orchestration (movecursor + wire) and wtype keyboard
   screenshot.py  grim capture: monitor / window / region + coord metadata

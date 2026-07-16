@@ -6,6 +6,26 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-07-16
+
+### Added
+- `hypruse init`: registers the server in detected MCP clients (per-client
+  confirmation, timestamped config backup, never overwrites an existing
+  entry), then runs doctor. `hypruse doctor`: one-command diagnostics for
+  dependencies, session discovery, the event socket, a virtual-pointer
+  handshake, and a live capture.
+- `binds` tool: the user's keybinds decoded to combos with descriptions,
+  so agents drive the desktop through its owner's own shortcuts.
+- `wait_for` tool: block on real compositor events (window open/close,
+  workspace change, title change) with a match filter and timeout.
+- Read-only mode: `HYPRUSE_READONLY=1` exposes only observation tools.
+
+### Changed
+- `launch` now subscribes to the Hyprland event socket before dispatching
+  and blocks on the actual openwindow event (polling remains as fallback).
+- Console entry point moved to `hypruse.cli:main`; bare `hypruse` still
+  runs the stdio server, so existing client registrations keep working.
+
 ## [0.1.2] - 2026-07-16
 
 ### Changed
