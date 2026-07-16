@@ -22,7 +22,6 @@ import contextlib
 import json
 import os
 import signal
-import sys
 import time
 from pathlib import Path
 
@@ -52,8 +51,15 @@ def init() -> None:
     _started = time.time()
     _write({"pid": os.getpid(), "started": _started, "last_action": "", "last_ts": 0})
     atexit.register(shutdown)
-    for sig in (signal.SIGTERM, signal.SIGINT):
-        signal.signal(sig, _die)
+    # SIGTERM (what the kill switch's `pkill` sends) has no default cleanup,
+    # so remove the beacon then let the default disposition terminate us.
+    # We deliberately do NOT touch SIGINT: the MCP/anyio runtime handles
+    # Ctrl+C gracefully, and overriding it with sys.exit() deadlocks the
+    # interpreter against the stdin-reader thread at shutdown ("could not
+    # acquire lock for stdin"). A lingering beacon after SIGTERM is harmless
+    # — the Waybar module liveness-checks the pid.
+    with contextlib.suppress(ValueError):  # signal() only works on the main thread
+        signal.signal(signal.SIGTERM, _on_sigterm)
 
 
 def touch(action: str) -> None:
@@ -78,6 +84,7 @@ def shutdown() -> None:
         _state_path = None
 
 
-def _die(signum: int, _frame: object) -> None:
+def _on_sigterm(signum: int, _frame: object) -> None:
     shutdown()
-    sys.exit(128 + signum)
+    signal.signal(signum, signal.SIG_DFL)
+    os.kill(os.getpid(), signum)
