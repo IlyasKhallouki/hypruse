@@ -118,6 +118,8 @@ latency disappears. Claude Code (`.claude/settings.json`):
 
 Everything speaks Hyprland's global logical coordinates — the space `hyprctl cursorpos` and window `at` use. Screenshots are pixel-space; each capture returns `geometry` and `scale` so `global = origin + pixel / scale`. On scale 1.0 monitors (most setups) image pixels *are* global coordinates.
 
+In image mode, captures automatically fit the host's result-size limit (Claude Desktop caps tool results at 1 MB): format degrades before resolution — native PNG, then full-res JPEG, then stepped downscale — because full-res JPEG reads UI text better than half-res PNG. The applied scale is folded into the returned metadata, so coordinate mapping stays exact; tune with `HYPRUSE_MAX_IMAGE_BYTES`, or pass `scale` for a deliberate zoom-out.
+
 By default the screenshot tool writes a PNG under `$XDG_RUNTIME_DIR/hypruse/` and returns its path — MCP hosts with a file reader (Claude Code's `Read`) render it natively. This default exists because some hosts (Claude Code ≤ 2.1.x among them) serialize inline MCP image blocks to base64 *text* the model can't see; we verified this empirically rather than trusting the spec. `HYPRUSE_SCREENSHOT_MODE=image` switches to inline image content blocks for hosts that render them correctly.
 
 ## Development

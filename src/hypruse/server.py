@@ -38,7 +38,7 @@ def _runtime_dir() -> Path:
 
 def _prune_shots(d: Path, keep: int = 20) -> None:
     """XDG_RUNTIME_DIR is tmpfs (RAM) — cap stored captures to the newest N."""
-    for old in sorted(d.glob("shot-*.png"))[:-keep]:
+    for old in sorted(d.glob("shot-*.*"))[:-keep]:
         with contextlib.suppress(OSError):
             old.unlink()
 
@@ -59,37 +59,42 @@ def desktop() -> dict[str, Any]:
 
 
 @mcp.tool()
-def screenshot(window: str = "", region: str = "") -> list[Any]:
+def screenshot(window: str = "", region: str = "", scale: float = 0) -> list[Any]:
     """See the screen. With no arguments, captures the focused monitor.
     `window`: "active" or a window address from `desktop` — crops exactly to
     that window (cheaper and sharper for reading one app). `region`:
     "x,y,WxH" in global coordinates, for zooming into small details.
+    `scale` (0.1–1.0): optional deliberate downscale — usually leave unset;
+    transport size limits are handled automatically.
 
-    Returns the saved PNG's path (READ THAT FILE to see the screen) plus a
-    JSON metadata line. The image is in pixel space; convert an image pixel
-    to a clickable global coordinate with: global = geometry[:2] + pixel /
-    scale (scale is 1.0 unless the monitor uses fractional scaling).
+    Returns the image (or, in file mode, the saved file's path — READ THAT
+    FILE to see the screen) plus a JSON metadata line. The image is pixel
+    space; convert an image pixel to a clickable global coordinate with:
+    global = geometry[:2] + pixel / scale — using the `scale` value from the
+    metadata, which already folds in any downscaling.
     """
     safety.touch("screenshot")
-    png, meta = shot.capture(window, region)
-    meta_block = TextContent(type="text", text=json.dumps(meta))
     if os.environ.get("HYPRUSE_SCREENSHOT_MODE", "file") == "image":
-        # Wire-level content types, not the fastmcp Image helper: helpers
-        # inside a mixed list hit "Unable to serialize unknown type" on
-        # some SDK versions (seen live with a desktop-app client).
+        # Fit the transport budget (base64 adds ~33%; Claude Desktop caps
+        # results at 1 MB) by degrading format before resolution.
+        budget = int(os.environ.get("HYPRUSE_MAX_IMAGE_BYTES", "700000"))
+        data, meta = shot.capture(window, region, scale=scale, max_bytes=budget)
         image_block = ImageContent(
-            type="image", data=base64.b64encode(png).decode(), mimeType="image/png"
+            type="image",
+            data=base64.b64encode(data).decode(),
+            mimeType=f"image/{meta['format']}",
         )
-        return [image_block, meta_block]
+        return [image_block, TextContent(type="text", text=json.dumps(meta))]
+    data, meta = shot.capture(window, region, scale=scale)
     d = _runtime_dir()
-    path = d / f"shot-{int(time.time() * 1000)}.png"
-    path.write_bytes(png)
+    path = d / f"shot-{int(time.time() * 1000)}.{meta['format']}"
+    path.write_bytes(data)
     _prune_shots(d)
     return [
         TextContent(
             type="text", text=f"screenshot written to {path} — read that file to view it"
         ),
-        meta_block,
+        TextContent(type="text", text=json.dumps(meta)),
     ]
 
 

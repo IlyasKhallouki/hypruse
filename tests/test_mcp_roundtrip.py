@@ -62,13 +62,18 @@ def test_screenshot_roundtrip_file_mode():
         assert f.read(8) == PNG_MAGIC
 
 
+JPEG_MAGIC = b"\xff\xd8\xff"
+
+
 @needs_hyprland
 def test_screenshot_roundtrip_image_mode():
     result = call("screenshot", {}, "image")
     assert not result.isError, result.content
     images = [c for c in result.content if isinstance(c, ImageContent)]
     assert images, f"no ImageContent in {[type(c).__name__ for c in result.content]}"
-    assert images[0].mimeType == "image/png"
-    assert base64.b64decode(images[0].data)[:8] == PNG_MAGIC
+    raw = base64.b64decode(images[0].data)
+    assert images[0].mimeType in ("image/png", "image/jpeg")
+    assert raw[:8] == PNG_MAGIC or raw[:3] == JPEG_MAGIC
+    assert len(raw) <= 700_000, "image mode must respect the transport budget"
     metas = [c.text for c in result.content if isinstance(c, TextContent)]
     assert "geometry" in metas[-1]

@@ -6,6 +6,14 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Added
+- Screenshot auto-fit: in image mode, captures fit a transport byte budget
+  (`HYPRUSE_MAX_IMAGE_BYTES`, default 700 kB raw ≈ 933 kB base64, sized to
+  Claude Desktop's 1 MB result cap) by degrading format before resolution
+  (native PNG → full-res JPEG → stepped downscale); the applied scale is
+  folded into the metadata so pixel→global mapping stays exact. Optional
+  `scale` tool parameter for deliberate zoom-outs. File mode stays native.
+
 ### Fixed
 - Screenshot image mode returned the fastmcp `Image` helper inside a mixed
   content list, which some SDK versions refuse to serialize ("Unable to

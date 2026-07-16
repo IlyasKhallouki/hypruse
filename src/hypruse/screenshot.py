@@ -46,6 +46,37 @@ def _grim(args: list[str]) -> bytes:
     return proc.stdout
 
 
+def _fit_ladder(explicit_scale: float) -> list[tuple[str, int | None, float]]:
+    """(format, jpeg-quality, scale) attempts, best fidelity first.
+
+    Full-resolution JPEG beats half-resolution PNG for reading UI text, so
+    format degrades before resolution does.
+    """
+    if explicit_scale:
+        s = explicit_scale
+        return [("png", None, s), ("jpeg", 85, s), ("jpeg", 80, s * 0.75)]
+    return [("png", None, 1.0), ("jpeg", 85, 1.0), ("jpeg", 85, 0.75), ("jpeg", 80, 0.5)]
+
+
+def _grab_fitting(
+    base_args: list[str], explicit_scale: float, max_bytes: int | None
+) -> tuple[bytes, str, float]:
+    """Capture within a byte budget; returns (data, format, applied_scale)."""
+    for fmt, quality, s in _fit_ladder(explicit_scale):
+        args = list(base_args)
+        if s != 1.0:
+            args = ["-s", f"{s:g}", *args]
+        if fmt == "jpeg":
+            args = ["-t", "jpeg", "-q", str(quality), *args]
+        data = _grim(args)
+        if max_bytes is None or len(data) <= max_bytes:
+            return data, fmt, s
+    raise ScreenshotError(
+        f"even a downscaled JPEG exceeds the {max_bytes}-byte result budget — "
+        "capture a window or region instead of the whole monitor"
+    )
+
+
 def _scale_at(x: int, y: int, monitors: list[dict[str, Any]]) -> float:
     for m in monitors:
         if m["x"] <= x < m["x"] + m["width"] and m["y"] <= y < m["y"] + m["height"]:
@@ -65,40 +96,53 @@ def _find_window(window: str, clients: list[dict[str, Any]], active: str | None)
     )
 
 
-def capture(window: str = "", region: str = "") -> tuple[bytes, dict[str, Any]]:
-    """Returns (png_bytes, metadata). Exactly one of window/region, or neither
-    for the focused monitor."""
+def capture(
+    window: str = "",
+    region: str = "",
+    scale: float = 0.0,
+    max_bytes: int | None = None,
+) -> tuple[bytes, dict[str, Any]]:
+    """Returns (image_bytes, metadata). Exactly one of window/region, or
+    neither for the focused monitor. `scale` (0 = auto) forces a capture
+    scale; `max_bytes` fits the result into a transport budget by degrading
+    format before resolution. The applied scale is folded into metadata so
+    the pixel→global mapping stays exact."""
     if window and region:
         raise ScreenshotError("pass window OR region, not both")
+    if scale and not 0.1 <= scale <= 1.0:
+        raise ScreenshotError(f"scale {scale} out of range (0.1–1.0, or 0 for auto)")
 
     monitors = hyprctl.query("monitors")
 
     if region:
         x, y, w, h = parse_region(region)
-        png = _grim(["-g", f"{x},{y} {w}x{h}"])
+        base = ["-g", f"{x},{y} {w}x{h}"]
         meta: dict[str, Any] = {"target": "region", "geometry": [x, y, w, h]}
-        meta["scale"] = _scale_at(x, y, monitors)
+        base_scale = _scale_at(x, y, monitors)
     elif window:
         active = (hyprctl.query("activewindow") or {}).get("address")
         c = _find_window(window, hyprctl.query("clients"), active)
         (x, y), (w, h) = c["at"], c["size"]
-        png = _grim(["-g", f"{x},{y} {w}x{h}"])
+        base = ["-g", f"{x},{y} {w}x{h}"]
         meta = {
             "target": "window",
             "window": c["address"],
             "class": c.get("class", ""),
             "geometry": [x, y, w, h],
-            "scale": _scale_at(x, y, monitors),
         }
+        base_scale = _scale_at(x, y, monitors)
     else:
         m = next((m for m in monitors if m.get("focused")), monitors[0])
-        png = _grim(["-o", m["name"]])
+        base = ["-o", m["name"]]
         meta = {
             "target": "monitor",
             "monitor": m["name"],
             "geometry": [m["x"], m["y"], m["width"], m["height"]],
-            "scale": float(m.get("scale", 1.0)),
         }
+        base_scale = float(m.get("scale", 1.0))
 
+    data, fmt, applied = _grab_fitting(base, scale, max_bytes)
+    meta["format"] = fmt
+    meta["scale"] = base_scale * applied
     meta["coords"] = "global = geometry[:2] + image_pixel / scale"
-    return png, meta
+    return data, meta
