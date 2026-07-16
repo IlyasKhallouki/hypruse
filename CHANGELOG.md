@@ -6,6 +6,19 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.1.1] — 2026-07-16
+
+### Fixed
+- Ctrl+C no longer hangs with a "could not acquire lock for stdin at
+  interpreter shutdown" fatal: the beacon's SIGINT handler was fighting the
+  MCP/anyio runtime's own shutdown. SIGINT is now left to the runtime (the
+  beacon is still cleaned up via `atexit`); only SIGTERM is handled.
+
+### Added
+- Running `hypruse` directly in a terminal now prints what it is and how to
+  register it, then exits, instead of silently blocking as a stdio server
+  waiting for a client that will never connect.
+
 ## [0.1.0] — 2026-07-16
 
 Initial release.
