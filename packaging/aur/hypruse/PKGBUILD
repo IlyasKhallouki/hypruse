@@ -9,7 +9,7 @@ license=('MIT')
 depends=('python' 'python-mcp' 'grim' 'wtype')
 makedepends=('python-build' 'python-installer' 'python-wheel' 'python-hatchling')
 source=("$pkgname-$pkgver.tar.gz::$url/archive/refs/tags/v$pkgver.tar.gz")
-sha256sums=('SKIP') # run `updpkgsums` once the tag is pushed
+sha256sums=('a5ae5947cf5888798cf78b89ef97ed1176da30951724db2507d6059fa84b59ac')
 
 build() {
   cd "$pkgname-$pkgver"

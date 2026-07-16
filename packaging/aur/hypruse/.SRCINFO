@@ -1,0 +1,19 @@
+pkgbase = hypruse
+	pkgdesc = Computer use for Hyprland — an MCP server giving AI agents native control of a Wayland desktop
+	pkgver = 0.1.1
+	pkgrel = 1
+	url = https://github.com/IlyasKhallouki/hypruse
+	arch = any
+	license = MIT
+	makedepends = python-build
+	makedepends = python-installer
+	makedepends = python-wheel
+	makedepends = python-hatchling
+	depends = python
+	depends = python-mcp
+	depends = grim
+	depends = wtype
+	source = hypruse-0.1.1.tar.gz::https://github.com/IlyasKhallouki/hypruse/archive/refs/tags/v0.1.1.tar.gz
+	sha256sums = a5ae5947cf5888798cf78b89ef97ed1176da30951724db2507d6059fa84b59ac
+
+pkgname = hypruse
