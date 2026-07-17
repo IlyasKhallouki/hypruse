@@ -11,7 +11,10 @@ import asyncio
 import base64
 import json
 import os
+import shutil
+import subprocess
 import sys
+import time
 
 import pytest
 from mcp import ClientSession, StdioServerParameters
@@ -107,3 +110,43 @@ def test_zoom_roundtrip_file_mode():
     path = texts[0].split()[-1]
     with open(path, "rb") as f:
         assert f.read(3) == JPEG_MAGIC
+
+
+needs_yad = pytest.mark.skipif(shutil.which("yad") is None, reason="yad not installed")
+
+
+@needs_hyprland
+@needs_yad
+def test_ui_roundtrip_reads_a11y_tree():
+    """Launch a real GTK dialog, ask the ui tool for its tree over MCP, and
+    confirm it returns the named buttons with global click points inside
+    the window. Exercises AT-SPI + busctl + coordinate mapping end to end."""
+    from hypruse import hyprctl
+
+    subprocess.run(
+        ["hyprctl", "dispatch", "exec",
+         "[float; center] yad --title=hypruse-mcp-test --button=Approve:0 "
+         "--button=Deny:1 --width=400 --height=200"],
+        capture_output=True,
+    )
+    try:
+        win = None
+        for _ in range(20):
+            time.sleep(0.2)
+            win = next((c for c in hyprctl.query("clients") if c.get("class") == "yad"), None)
+            if win:
+                break
+        assert win, "yad did not launch"
+        result = call("ui", {"window": win["address"]}, "file")
+        assert not result.isError, result.content
+        # FastMCP serializes a list return as one content block per element
+        elements = [json.loads(c.text) for c in result.content if isinstance(c, TextContent)]
+        names = {e["name"]: e for e in elements}
+        assert "Approve" in names and "Deny" in names
+        ax, ay = win["at"]
+        aw, ah = win["size"]
+        for e in elements:  # every click point lands inside the window
+            assert ax <= e["x"] < ax + aw and ay <= e["y"] < ay + ah
+            assert e["clickable"] is True
+    finally:
+        subprocess.run(["hyprctl", "dispatch", "closewindow", "class:yad"], capture_output=True)
