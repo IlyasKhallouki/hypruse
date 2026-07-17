@@ -98,6 +98,7 @@ def _deliver_capture(
     scale: float = 0.0,
     extra: dict[str, Any] | None = None,
     stable: bool = False,
+    lossless: bool = False,
 ) -> list[Any]:
     """Capture and package for MCP transport: inline image + metadata in
     image mode, a saved file path + metadata otherwise."""
@@ -107,7 +108,9 @@ def _deliver_capture(
         # results at 1 MB) by degrading format before resolution.
         budget = int(os.environ.get("HYPRUSE_MAX_IMAGE_BYTES", "700000"))
         max_edge = int(os.environ.get("HYPRUSE_MAX_IMAGE_EDGE", "1568"))
-        data, meta = grab(window, region, scale=scale, max_bytes=budget, max_edge=max_edge)
+        data, meta = grab(
+            window, region, scale=scale, max_bytes=budget, max_edge=max_edge, lossless=lossless
+        )
         meta.update(extra or {})
         image_block = ImageContent(
             type="image",
@@ -115,7 +118,7 @@ def _deliver_capture(
             mimeType=f"image/{meta['format']}",
         )
         return [image_block, TextContent(type="text", text=json.dumps(meta))]
-    data, meta = grab(window, region, scale=scale)
+    data, meta = grab(window, region, scale=scale, lossless=lossless)
     meta.update(extra or {})
     d = _runtime_dir()
     path = d / f"shot-{int(time.time() * 1000)}.{meta['format']}"
@@ -131,7 +134,11 @@ def _deliver_capture(
 
 @mcp.tool()
 def screenshot(
-    window: str = "", region: str = "", scale: float = 0, stable: bool = False
+    window: str = "",
+    region: str = "",
+    scale: float = 0,
+    stable: bool = False,
+    lossless: bool = False,
 ) -> list[Any]:
     """Capture the focused monitor, a window (`window`: "active" or an
     address from desktop, cheapest for reading one app), or a `region`
@@ -140,15 +147,21 @@ def screenshot(
     optional deliberate downscale, usually leave unset. `stable=true`
     waits (up to 2s) until two consecutive frames match, so a capture
     right after an action is not taken mid-animation; metadata gains
-    `stable`. Before clicking a small control, follow with `zoom` at the
-    estimated point."""
+    `stable`. Captures are fast JPEG by default; `lossless=true` returns
+    PNG for pixel-exact work. Before clicking a small control, follow with
+    `zoom` at the estimated point."""
     safety.touch("screenshot")
-    return _deliver_capture(window, region, scale=scale, stable=stable)
+    return _deliver_capture(window, region, scale=scale, stable=stable, lossless=lossless)
 
 
 @mcp.tool()
 def zoom(
-    x: float, y: float, size: str = "", window: str = "", stable: bool = False
+    x: float,
+    y: float,
+    size: str = "",
+    window: str = "",
+    stable: bool = False,
+    lossless: bool = False,
 ) -> list[Any]:
     """Native-resolution re-capture around a point: the precision step of
     the coarse-to-fine loop. Screenshot first, estimate the target's global
@@ -157,11 +170,12 @@ def zoom(
     logical pixels (default 480x360) is clamped to the screen; `window`
     (an address from desktop) clamps to that window instead. The metadata
     echoes the requested point back as `point`; `stable=true` waits for
-    the frame to settle first."""
+    the frame to settle first; `lossless=true` returns PNG."""
     safety.touch("zoom")
     rx, ry, rw, rh = shot.zoom_region(x, y, size, window)
     return _deliver_capture(
         region=f"{rx},{ry},{rw}x{rh}",
+        lossless=lossless,
         extra={"target": "zoom", "point": [x, y]},
         stable=stable,
     )

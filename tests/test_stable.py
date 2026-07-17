@@ -8,7 +8,9 @@ def _feed(monkeypatch, frames):
     """capture() returns the next frame each call; records call count."""
     calls = {"n": 0}
 
-    def fake_capture(window="", region="", scale=0.0, max_bytes=None, max_edge=None):
+    def fake_capture(
+        window="", region="", scale=0.0, max_bytes=None, max_edge=None, lossless=False
+    ):
         i = min(calls["n"], len(frames) - 1)
         calls["n"] += 1
         return frames[i], {"format": "png", "frame": i}

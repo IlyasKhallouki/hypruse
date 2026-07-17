@@ -41,7 +41,7 @@ Design decisions:
 | tool | what it does |
 |---|---|
 | `desktop` | One-call semantic snapshot: monitors, workspaces, windows (address/class/title/geometry), active window, cursor |
-| `screenshot` | Focused monitor, exact window crop by address, or `x,y,WxH` region; returns image + coordinate-mapping metadata; `stable=true` waits for the frame to settle |
+| `screenshot` | Focused monitor, exact window crop by address, or `x,y,WxH` region; returns image + coordinate-mapping metadata; fast JPEG by default (`lossless=true` for PNG); `stable=true` waits for the frame to settle |
 | `zoom` | Native-resolution re-capture around an estimated point (optionally clamped to a window): the precision step before clicking small controls, same metadata contract |
 | `pointer` | move / click / drag / scroll (discrete wheel notches) in global coordinates |
 | `keyboard` | Type literal text (unicode-safe) or press combos: `ctrl+shift+t`, `super+enter`, `F5` |
@@ -116,7 +116,9 @@ Read this section before installing. **hypruse hands an agent your mouse, your k
 ## Performance
 
 Measured on a live session (Hyprland 0.55, 1080p, 20 windows): `desktop`
-~30 ms, workspace/window dispatch ~10-20 ms, screenshots ~0.5 s. If tool
+~30 ms, workspace/window dispatch ~10-20 ms, full-monitor screenshot ~50 ms
+(fast JPEG default; ~440 ms if you ask for lossless PNG), region/zoom
+captures well under that. If tool
 calls *feel* slow, it is almost certainly the MCP **approval prompt** in
 front of each call, not the server. Allowlist the tools you trust and the
 latency disappears. Claude Code (`.claude/settings.json`):
@@ -140,9 +142,9 @@ Everything speaks Hyprland's global logical coordinates, the space `hyprctl curs
 
 The `zoom` tool does the precision arithmetic for the agent: give it an estimated global point and it captures a native-resolution box around it, clamped to the screen (or to a window), with the same metadata contract. That two-step loop, estimate on the full view then re-estimate on the zoom, is the [research-backed](#research) way to hit small controls.
 
-In image mode, captures automatically fit the host's result-size limit (Claude Desktop caps tool results at 1 MB): format degrades before resolution (native PNG, then full-res JPEG, then stepped downscale) because full-res JPEG reads UI text better than half-res PNG. The applied scale is folded into the returned metadata, so coordinate mapping stays exact; tune with `HYPRUSE_MAX_IMAGE_BYTES`, or pass `scale` for a deliberate zoom-out.
+Captures default to JPEG q90: on a 1080p frame that is roughly 13x faster to encode than PNG (grim's zlib path dominates capture time) and about 3x smaller, while full-res q90 reads UI text well. Pass `lossless=true` for exact pixels (PNG). In image mode, captures also fit the host's result-size limit (Claude Desktop caps tool results at 1 MB) by degrading quality before resolution, since grim's downscale filter is slower than a full-res capture. The applied scale is folded into the returned metadata, so coordinate mapping stays exact; tune with `HYPRUSE_MAX_IMAGE_BYTES`, or pass `scale` for a deliberate zoom-out.
 
-By default the screenshot tool writes a PNG under `$XDG_RUNTIME_DIR/hypruse/` and returns its path; MCP hosts with a file reader (Claude Code's `Read`) render it natively. This default exists because some hosts (including Claude Code 2.1.x) serialize inline MCP image blocks to base64 text the model cannot see. `HYPRUSE_SCREENSHOT_MODE=image` switches to inline image content blocks for hosts that render them correctly.
+By default the screenshot tool writes the image under `$XDG_RUNTIME_DIR/hypruse/` and returns its path; MCP hosts with a file reader (Claude Code's `Read`) render it natively. This default exists because some hosts (including Claude Code 2.1.x) serialize inline MCP image blocks to base64 text the model cannot see. `HYPRUSE_SCREENSHOT_MODE=image` switches to inline image content blocks for hosts that render them correctly.
 
 ## Development
 
@@ -161,8 +163,6 @@ Grounded in measured hot-path latencies and the finding that LLM calls are 76 to
 
 **Faster**
 
-- JPEG-default captures: default screenshots to JPEG q90 instead of PNG (measured ~13x faster full-monitor capture, ~640 ms to ~50 ms, and ~3x smaller payload), keeping lossless PNG on request. Also speeds the wait-for-stable poll, which inherits the format.
-- Quality-first fit ladder: under a byte budget, step JPEG quality down before ever downscaling, since grim's convolution downscale is slower than a full-res capture.
 - Leaner `desktop()`: collapse its five `hyprctl` forks into one `hyprctl --batch` (~28 ms to ~12 ms) and fold in the focused window, per-window workspace, and a recent-events tail.
 - In-process wlr-screencopy over the raw wire (as input already works): drop grim's fork floor from small captures and add damage-tracked wait-for-stable that returns the instant the screen settles.
 

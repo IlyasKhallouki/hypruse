@@ -93,25 +93,35 @@ def _grim(args: list[str]) -> bytes:
     return proc.stdout
 
 
-def _fit_ladder(start_scale: float) -> list[tuple[str, int | None, float]]:
-    """(format, jpeg-quality, scale) attempts from a starting scale, best
-    fidelity first. Full-resolution JPEG beats half-resolution PNG for
-    reading UI text, so format degrades before resolution does.
+def _fit_ladder(start_scale: float, lossless: bool = False) -> list[tuple[str, int | None, float]]:
+    """(format, jpeg-quality, scale) attempts, best fidelity first, for
+    fitting a byte budget.
+
+    The default is full-resolution JPEG. grim's PNG path is dominated by
+    zlib and is ~13x slower to encode than JPEG on a 1080p frame (measured
+    ~640 ms vs ~50 ms), while full-res q90 reads UI text well, so quality
+    degrades before resolution ever does. Resolution is the last resort
+    because grim's downscale filter is a convolution that is slower than a
+    full-res capture. `lossless` leads with PNG for callers that need exact
+    pixels, degrading to JPEG only if PNG blows the budget.
     """
     s = start_scale
-    return [
-        ("png", None, s),
-        ("jpeg", 85, s),
-        ("jpeg", 85, s * 0.75),
-        ("jpeg", 80, s * 0.5),
+    jpeg = [
+        ("jpeg", 90, s),
+        ("jpeg", 75, s),
+        ("jpeg", 60, s),
+        ("jpeg", 45, s),
+        ("jpeg", 45, s * 0.75),
+        ("jpeg", 40, s * 0.5),
     ]
+    return [("png", None, s), *jpeg] if lossless else jpeg
 
 
 def _grab_fitting(
-    base_args: list[str], start_scale: float, max_bytes: int | None
+    base_args: list[str], start_scale: float, max_bytes: int | None, lossless: bool = False
 ) -> tuple[bytes, str, float]:
     """Capture within a byte budget; returns (data, format, applied_scale)."""
-    for fmt, quality, s in _fit_ladder(start_scale):
+    for fmt, quality, s in _fit_ladder(start_scale, lossless):
         args = list(base_args)
         if abs(s - 1.0) > 1e-6:
             args = ["-s", f"{s:g}", *args]
@@ -193,13 +203,16 @@ def capture(
     scale: float = 0.0,
     max_bytes: int | None = None,
     max_edge: int | None = None,
+    lossless: bool = False,
 ) -> tuple[bytes, dict[str, Any]]:
     """Returns (image_bytes, metadata). Exactly one of window/region, or
     neither for the focused monitor. `scale` (0 = auto) forces a capture
     scale; `max_edge` caps the output's long edge (so the API never
     downscales it under the model); `max_bytes` fits a transport budget by
-    degrading format before resolution. Any applied downscale is folded into
-    the metadata `scale`, so the pixel→global mapping stays exact."""
+    degrading format before resolution. The default format is JPEG q90
+    (fast, small, reads UI text well); `lossless` leads with PNG instead.
+    Any applied downscale is folded into the metadata `scale`, so the
+    pixel→global mapping stays exact."""
     if window and region:
         raise ScreenshotError("pass window OR region, not both")
     if scale and not 0.1 <= scale <= 1.0:
@@ -241,7 +254,7 @@ def capture(
 
     # explicit scale wins; otherwise fit the long edge to keep the mapping honest
     start_scale = scale or _cap_scale(physical_long, max_edge)
-    data, fmt, applied = _grab_fitting(base, start_scale, max_bytes)
+    data, fmt, applied = _grab_fitting(base, start_scale, max_bytes, lossless)
     iw, ih = image_size(data)
     meta["image"] = [iw, ih]
     meta["format"] = fmt
@@ -256,6 +269,7 @@ def capture_stable(
     scale: float = 0.0,
     max_bytes: int | None = None,
     max_edge: int | None = None,
+    lossless: bool = False,
     interval: float = 0.15,
     timeout: float = 2.0,
 ) -> tuple[bytes, dict[str, Any]]:
@@ -263,12 +277,14 @@ def capture_stable(
     screenshot taken right after an action does not land mid-animation.
     Returns the settled frame with meta['stable'] = True, or the last
     frame with False when the content never settles within `timeout`
-    (blinking cursors, video)."""
-    data, meta = capture(window, region, scale, max_bytes, max_edge)
+    (blinking cursors, video). The byte-compare relies on the encoder being
+    deterministic: both grim JPEG and PNG map identical pixels to identical
+    bytes, so the default JPEG format is safe here."""
+    data, meta = capture(window, region, scale, max_bytes, max_edge, lossless)
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
         time.sleep(interval)
-        nxt, nmeta = capture(window, region, scale, max_bytes, max_edge)
+        nxt, nmeta = capture(window, region, scale, max_bytes, max_edge, lossless)
         if nxt == data:
             nmeta["stable"] = True
             return nxt, nmeta

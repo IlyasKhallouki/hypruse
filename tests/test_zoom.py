@@ -126,7 +126,9 @@ def test_zoom_tool_builds_region_and_echoes_point(monkeypatch, tmp_path):
     )
     captured = {}
 
-    def fake_capture(window="", region="", scale=0.0, max_bytes=None, max_edge=None):
+    def fake_capture(
+        window="", region="", scale=0.0, max_bytes=None, max_edge=None, lossless=False
+    ):
         captured["region"] = region
         meta = {
             "target": "region",

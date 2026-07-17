@@ -13,52 +13,84 @@ class FakeGrim:
     """Returns blobs whose size depends on format/quality/scale args."""
 
     def __init__(self, sizes):
-        self.sizes = sizes  # key: (fmt, scale-string or None)
+        self.sizes = sizes  # key: (fmt, quality-or-None, scale-string-or-None)
         self.calls = []
 
     def __call__(self, args):
         fmt = "jpeg" if "jpeg" in args else "png"
+        q = int(args[args.index("-q") + 1]) if "-q" in args else None
         s = args[args.index("-s") + 1] if "-s" in args else None
-        self.calls.append((fmt, s))
-        return b"x" * self.sizes[(fmt, s)]
+        self.calls.append((fmt, q, s))
+        return b"x" * self.sizes[(fmt, q, s)]
 
 
-def test_native_png_when_it_fits(monkeypatch):
-    fake = FakeGrim({("png", None): 500_000})
+def test_ladder_default_is_jpeg_quality_first():
+    rungs = screenshot._fit_ladder(1.0)
+    assert rungs[0][0] == "jpeg" and "png" not in [f for f, _, _ in rungs]
+    # quality degrades at full resolution before any downscale
+    full_res = [q for f, q, s in rungs if abs(s - 1.0) < 1e-9]
+    assert full_res == sorted(full_res, reverse=True)
+    first_downscale = next(i for i, (_, _, s) in enumerate(rungs) if s < 1.0)
+    assert first_downscale == len(full_res)  # every full-res rung precedes any downscale
+
+
+def test_ladder_lossless_leads_with_png():
+    rungs = screenshot._fit_ladder(1.0, lossless=True)
+    assert rungs[0] == ("png", None, 1.0)
+    assert any(f == "jpeg" for f, _, _ in rungs[1:])  # jpeg fallback under budget
+
+
+def test_default_jpeg_when_it_fits(monkeypatch):
+    fake = FakeGrim({("jpeg", 90, None): 400_000})
     monkeypatch.setattr(screenshot, "_grim", fake)
     data, fmt, applied = screenshot._grab_fitting(["-o", "eDP-1"], 1.0, 700_000)
-    assert (fmt, applied, len(data)) == ("png", 1.0, 500_000)
-    assert fake.calls == [("png", None)]
+    assert (fmt, applied, len(data)) == ("jpeg", 1.0, 400_000)
+    assert fake.calls == [("jpeg", 90, None)]
 
 
-def test_degrades_format_before_resolution(monkeypatch):
-    fake = FakeGrim({("png", None): 900_000, ("jpeg", None): 330_000})
+def test_lossless_returns_png_when_it_fits(monkeypatch):
+    fake = FakeGrim({("png", None, None): 500_000})
     monkeypatch.setattr(screenshot, "_grim", fake)
-    data, fmt, applied = screenshot._grab_fitting(["-o", "eDP-1"], 1.0, 700_000)
+    _, fmt, applied = screenshot._grab_fitting(["-o", "eDP-1"], 1.0, 700_000, lossless=True)
+    assert (fmt, applied) == ("png", 1.0)
+    assert fake.calls == [("png", None, None)]
+
+
+def test_degrades_quality_before_resolution(monkeypatch):
+    # q90 too big, q75 fits; must not have touched -s
+    fake = FakeGrim({("jpeg", 90, None): 900_000, ("jpeg", 75, None): 300_000})
+    monkeypatch.setattr(screenshot, "_grim", fake)
+    _, fmt, applied = screenshot._grab_fitting(["-o", "eDP-1"], 1.0, 700_000)
     assert (fmt, applied) == ("jpeg", 1.0)
-    assert fake.calls == [("png", None), ("jpeg", None)]
+    assert fake.calls == [("jpeg", 90, None), ("jpeg", 75, None)]
 
 
-def test_downscales_when_format_is_not_enough(monkeypatch):
+def test_downscales_only_after_quality_exhausted(monkeypatch):
     fake = FakeGrim(
         {
-            ("png", None): 2_000_000,
-            ("jpeg", None): 900_000,
-            ("jpeg", "0.75"): 500_000,
+            ("jpeg", 90, None): 2_000_000,
+            ("jpeg", 75, None): 1_500_000,
+            ("jpeg", 60, None): 1_200_000,
+            ("jpeg", 45, None): 900_000,
+            ("jpeg", 45, "0.75"): 500_000,
         }
     )
     monkeypatch.setattr(screenshot, "_grim", fake)
     _, fmt, applied = screenshot._grab_fitting(["-o", "eDP-1"], 1.0, 700_000)
     assert (fmt, applied) == ("jpeg", 0.75)
+    # every full-res quality rung was tried before the first downscale
+    assert [c[2] for c in fake.calls[:4]] == [None, None, None, None]
 
 
 def test_errors_when_nothing_fits(monkeypatch):
     fake = FakeGrim(
         {
-            ("png", None): 9_000_000,
-            ("jpeg", None): 8_000_000,
-            ("jpeg", "0.75"): 7_000_000,
-            ("jpeg", "0.5"): 6_000_000,
+            ("jpeg", 90, None): 9_000_000,
+            ("jpeg", 75, None): 9_000_000,
+            ("jpeg", 60, None): 9_000_000,
+            ("jpeg", 45, None): 9_000_000,
+            ("jpeg", 45, "0.75"): 8_000_000,
+            ("jpeg", 40, "0.5"): 7_000_000,
         }
     )
     monkeypatch.setattr(screenshot, "_grim", fake)
@@ -66,20 +98,20 @@ def test_errors_when_nothing_fits(monkeypatch):
         screenshot._grab_fitting(["-o", "eDP-1"], 1.0, 700_000)
 
 
-def test_no_budget_returns_native(monkeypatch):
-    fake = FakeGrim({("png", None): 50_000_000})
+def test_no_budget_returns_default_jpeg(monkeypatch):
+    fake = FakeGrim({("jpeg", 90, None): 50_000_000})
     monkeypatch.setattr(screenshot, "_grim", fake)
     _, fmt, applied = screenshot._grab_fitting(["-o", "eDP-1"], 1.0, None)
-    assert (fmt, applied) == ("png", 1.0)
-    assert len(fake.calls) == 1
+    assert (fmt, applied) == ("jpeg", 1.0)
+    assert len(fake.calls) == 1  # first rung, no budget to exceed
 
 
 def test_explicit_scale_is_honored(monkeypatch):
-    fake = FakeGrim({("png", "0.5"): 200_000})
+    fake = FakeGrim({("jpeg", 90, "0.5"): 200_000})
     monkeypatch.setattr(screenshot, "_grim", fake)
     _, fmt, applied = screenshot._grab_fitting(["-o", "eDP-1"], 0.5, 700_000)
-    assert (fmt, applied) == ("png", 0.5)
-    assert fake.calls == [("png", "0.5")]
+    assert (fmt, applied) == ("jpeg", 0.5)
+    assert fake.calls == [("jpeg", 90, "0.5")]
 
 
 def test_capture_folds_applied_scale_into_meta(monkeypatch):
@@ -93,7 +125,16 @@ def test_capture_folds_applied_scale_into_meta(monkeypatch):
             ]
         }[cmd],
     )
-    fake = FakeGrim({("png", None): 2_000_000, ("jpeg", None): 900_000, ("jpeg", "0.75"): 400_000})
+    # every full-res jpeg quality rung is over budget, so it falls to 0.75 scale
+    fake = FakeGrim(
+        {
+            ("jpeg", 90, None): 2_000_000,
+            ("jpeg", 75, None): 1_500_000,
+            ("jpeg", 60, None): 1_100_000,
+            ("jpeg", 45, None): 900_000,
+            ("jpeg", 45, "0.75"): 400_000,
+        }
+    )
     monkeypatch.setattr(screenshot, "_grim", fake)
     monkeypatch.setattr(screenshot, "image_size", lambda data: (1440, 810))
     _, meta = screenshot.capture(max_bytes=700_000)

@@ -51,18 +51,30 @@ def test_desktop_roundtrip():
     assert state["monitors"]
 
 
+JPEG_MAGIC = b"\xff\xd8\xff"
+
+
 @needs_hyprland
 def test_screenshot_roundtrip_file_mode():
+    # default is fast JPEG
     result = call("screenshot", {}, "file")
     assert not result.isError, result.content
     texts = [c.text for c in result.content if isinstance(c, TextContent)]
     assert any("screenshot saved" in t for t in texts)
     path = texts[0].split()[-1]  # path is the final token, nothing after it
     with open(path, "rb") as f:
+        assert f.read(3) == JPEG_MAGIC
+
+
+@needs_hyprland
+def test_screenshot_roundtrip_lossless_file_mode():
+    # lossless=true opts back into PNG
+    result = call("screenshot", {"lossless": True}, "file")
+    assert not result.isError, result.content
+    texts = [c.text for c in result.content if isinstance(c, TextContent)]
+    path = texts[0].split()[-1]
+    with open(path, "rb") as f:
         assert f.read(8) == PNG_MAGIC
-
-
-JPEG_MAGIC = b"\xff\xd8\xff"
 
 
 @needs_hyprland
@@ -94,4 +106,4 @@ def test_zoom_roundtrip_file_mode():
     assert abs(meta["image"][1] - 360 * meta["scale"]) <= 2
     path = texts[0].split()[-1]
     with open(path, "rb") as f:
-        assert f.read(8) == PNG_MAGIC
+        assert f.read(3) == JPEG_MAGIC

@@ -6,6 +6,16 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Changed
+- Screenshots default to JPEG q90 instead of PNG. On a 1080p frame this is
+  roughly 13x faster to encode (measured ~640 ms to ~50 ms full monitor)
+  and about 3x smaller, while full-res q90 reads UI text well. Pass
+  `lossless=true` on `screenshot`/`zoom` for exact pixels (PNG). Because
+  `capture_stable` inherits the format, its poll speeds up by the same
+  factor. The byte-budget fit ladder now degrades JPEG quality before
+  resolution, since grim's downscale filter is slower than a full-res
+  capture; resolution is a last resort.
+
 ## [0.4.1] - 2026-07-17
 
 ### Fixed

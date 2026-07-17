@@ -19,6 +19,13 @@ needs_hyprland = pytest.mark.skipif(
     reason="no live Hyprland session",
 )
 
+PNG_MAGIC = b"\x89PNG\r\n\x1a\n"
+JPEG_MAGIC = b"\xff\xd8\xff"
+
+
+def _is_image(data: bytes) -> bool:
+    return data[:8] == PNG_MAGIC or data[:3] == JPEG_MAGIC
+
 
 @needs_hyprland
 def test_snapshot_live():
@@ -64,20 +71,22 @@ def test_screenshot_per_monitor_maps_back():
     raw = hyprctl.query("monitors")
     for rm in raw:
         lx, ly, lw, lh = hyprctl.logical_rect(rm)
-        png, meta = screenshot.capture(region=f"{lx},{ly},{min(lw, 64)}x{min(lh, 64)}")
-        assert png[:8] == b"\x89PNG\r\n\x1a\n"
+        img, meta = screenshot.capture(region=f"{lx},{ly},{min(lw, 64)}x{min(lh, 64)}")
+        assert _is_image(img)
         gx = meta["geometry"][0] + (meta["image"][0] / meta["scale"]) / 2
         assert lx <= gx < lx + lw
 
 
 @needs_hyprland
 def test_screenshot_live_monitor_and_region():
-    png, meta = screenshot.capture()
-    assert png[:8] == b"\x89PNG\r\n\x1a\n"
+    img, meta = screenshot.capture()
+    assert _is_image(img) and meta["format"] == "jpeg"  # default is fast JPEG
     assert meta["target"] == "monitor"
-    png2, meta2 = screenshot.capture(region="50,50,120x80")
-    assert png2[:8] == b"\x89PNG\r\n\x1a\n"
+    img2, meta2 = screenshot.capture(region="50,50,120x80")
+    assert _is_image(img2)
     assert meta2["geometry"] == [50, 50, 120, 80]
+    png, pmeta = screenshot.capture(region="50,50,120x80", lossless=True)
+    assert png[:8] == PNG_MAGIC and pmeta["format"] == "png"
 
 
 @needs_hyprland
