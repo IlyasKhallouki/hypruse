@@ -6,6 +6,15 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Added
+- Act-and-observe fusion: `pointer`, `keyboard`, `hypr`, and `use_bind`
+  take an optional `then` argument that appends a fresh view of the result
+  to the same tool call, so the agent sees an action's effect without a
+  second round-trip (LLM calls dominate task latency). `then='desktop'`
+  appends a semantic snapshot (~25 ms, best for window/focus changes),
+  `then='screenshot'` a stable capture (best for visual changes),
+  `then='none'` (default) nothing.
+
 ### Changed
 - Screenshots default to JPEG q90 instead of PNG. On a 1080p frame this is
   roughly 13x faster to encode (measured ~640 ms to ~50 ms full monitor)

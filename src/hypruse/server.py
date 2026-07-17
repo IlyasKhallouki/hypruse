@@ -31,8 +31,10 @@ INSTRUCTIONS = """\
 hypruse controls a live Hyprland desktop. Workflow: call `desktop` first
 and prefer `hypr`/`launch` (IPC, instant and exact) for anything window-
 or workspace-shaped; use `screenshot` + `pointer`/`keyboard` only to see
-and operate inside application windows; call `desktop` again to verify
-effects. `binds` lists the owner's own keybinds; to run one, call
+and operate inside application windows. To verify an effect without a
+second round-trip, pass `then='desktop'` (a fresh snapshot) or
+`then='screenshot'` to the acting call itself instead of calling `desktop`
+again. `binds` lists the owner's own keybinds; to run one, call
 `use_bind` with its combo (synthetic keypresses do NOT trigger compositor
 binds, so `keyboard` is only for shortcuts the focused app handles). After
 actions with delayed effects, block on `wait_for` (window_open,
@@ -181,6 +183,26 @@ def zoom(
     )
 
 
+_OBSERVE_MODES = ("none", "desktop", "screenshot")
+
+
+def _acted(msg: str, then: str) -> list[Any] | str:
+    """Fuse an action with its observation: append a fresh view of the
+    result to the action's own tool result, so the agent sees the effect
+    without spending a second round-trip. `then='desktop'` appends a
+    semantic snapshot (~30 ms, a few hundred tokens, best for window/focus
+    changes); `'screenshot'` appends a stable capture of the focused
+    monitor (best for visual changes); `'none'` appends nothing."""
+    if then == "none":
+        return msg
+    head = TextContent(type="text", text=msg)
+    if then == "desktop":
+        return [head, TextContent(type="text", text=json.dumps(hyprctl.snapshot()))]
+    if then == "screenshot":
+        return [head, *_deliver_capture(stable=True)]
+    raise ValueError(f"unknown then {then!r}: {'|'.join(_OBSERVE_MODES)}")
+
+
 def pointer(
     action: str,
     x: float | None = None,
@@ -191,11 +213,14 @@ def pointer(
     scroll_dy: float = 0,
     scroll_dx: float = 0,
     double: bool = False,
-) -> str:
+    then: str = "none",
+) -> list[Any] | str:
     """Mouse in global coordinates. action='move' (x,y) | 'click' (optional
     x,y first; button left/right/middle; double=true) | 'drag' (x,y →
     to_x,to_y holding button) | 'scroll' (scroll_dy notches, positive =
-    content down; optional x,y first)."""
+    content down; optional x,y first). `then` appends the result to this
+    call so you skip a round-trip: 'desktop' a fresh snapshot, 'screenshot'
+    a stable capture, 'none' (default) nothing."""
     safety.touch(f"pointer:{action}")
     if action == "move":
         if x is None or y is None:
@@ -211,27 +236,28 @@ def pointer(
         hinput.scroll(dy=scroll_dy, dx=scroll_dx, x=x, y=y)
     else:
         raise ValueError(f"unknown action {action!r}: move|click|drag|scroll")
-    return f"{action} ok; cursor now at {hyprctl.cursor_pos()}"
+    return _acted(f"{action} ok; cursor now at {hyprctl.cursor_pos()}", then)
 
 
-def keyboard(action: str, text: str = "", keys: str = "") -> str:
+def keyboard(action: str, text: str = "", keys: str = "", then: str = "none") -> list[Any] | str:
     """Keyboard to the FOCUSED APP (focus via hypr first). action='type'
     (text, unicode-safe) | 'key' (keys combo: 'ctrl+shift+t', 'esc', 'F5';
     aliases enter/esc/tab/backspace/pgup/pgdn/arrows, else XKB keysyms).
     This drives shortcuts the focused application handles (ctrl+t, ctrl+l).
     It does NOT trigger Hyprland's own keybinds (super+...): those go
-    through `use_bind`, and workspace/window actions through `hypr`."""
+    through `use_bind`, and workspace/window actions through `hypr`. `then`
+    ('desktop'|'screenshot'|'none') appends the result to this call."""
     safety.touch(f"keyboard:{action}")
     if action == "type":
         if not text:
             raise ValueError("type needs text")
         hinput.type_text(text)
-        return f"typed {len(text)} characters"
+        return _acted(f"typed {len(text)} characters", then)
     if action == "key":
         if not keys:
             raise ValueError("key needs keys")
         hinput.key_combo(keys)
-        return f"pressed {keys}"
+        return _acted(f"pressed {keys}", then)
     raise ValueError(f"unknown action {action!r}: type|key")
 
 
@@ -246,42 +272,45 @@ def _addr(target: str) -> str:
     return f"address:{target}"
 
 
-def hypr(action: str, target: str = "", workspace: str = "") -> str:
+def hypr(action: str, target: str = "", workspace: str = "", then: str = "none") -> list[Any] | str:
     """Window/workspace ops over IPC (instant, no vision).
     action='workspace' (workspace: number/name/'special:name') |
     'focus_window' (target: address) | 'move_window' (target + workspace,
     silent) | 'close_window' (target) | 'fullscreen' (target?) |
-    'toggle_floating' (target?)."""
+    'toggle_floating' (target?). `then` ('desktop'|'screenshot'|'none')
+    appends the result to this call."""
     safety.touch(f"hypr:{action}")
     if action == "workspace":
         if not workspace:
             raise ValueError("workspace action needs `workspace`")
         hyprctl.dispatch("workspace", workspace)
-        return f"on workspace {workspace}"
-    if action == "focus_window":
+        msg = f"on workspace {workspace}"
+    elif action == "focus_window":
         hyprctl.dispatch("focuswindow", _addr(target))
-        return f"focused {target}"
-    if action == "move_window":
+        msg = f"focused {target}"
+    elif action == "move_window":
         if not workspace:
             raise ValueError("move_window needs `workspace`")
         hyprctl.dispatch("movetoworkspacesilent", f"{workspace},{_addr(target)}")
-        return f"moved {target} to workspace {workspace}"
-    if action == "close_window":
+        msg = f"moved {target} to workspace {workspace}"
+    elif action == "close_window":
         hyprctl.dispatch("closewindow", _addr(target))
-        return f"asked {target} to close"
-    if action == "fullscreen":
+        msg = f"asked {target} to close"
+    elif action == "fullscreen":
         if target:
             hyprctl.dispatch("focuswindow", _addr(target))
         hyprctl.dispatch("fullscreen", "0")
-        return "fullscreen toggled"
-    if action == "toggle_floating":
+        msg = "fullscreen toggled"
+    elif action == "toggle_floating":
         args = (_addr(target),) if target else ()
         hyprctl.dispatch("togglefloating", *args)
-        return "floating toggled"
-    raise ValueError(
-        f"unknown action {action!r}: workspace|focus_window|move_window|"
-        "close_window|fullscreen|toggle_floating"
-    )
+        msg = "floating toggled"
+    else:
+        raise ValueError(
+            f"unknown action {action!r}: workspace|focus_window|move_window|"
+            "close_window|fullscreen|toggle_floating"
+        )
+    return _acted(msg, then)
 
 
 def _await_new_window(before: set[str], wait_s: float) -> dict[str, Any] | None:
@@ -407,19 +436,20 @@ def clipboard(action: str, text: str = "") -> str:
     raise ValueError(f"unknown action {action!r}: read|write")
 
 
-def use_bind(combo: str) -> str:
+def use_bind(combo: str, then: str = "none") -> list[Any] | str:
     """Run one of the user's own Hyprland keybinds by its combo (from the
     `binds` tool), e.g. 'SUPER+F'. This executes the bound action directly
     (the only reliable way: synthetic keypresses do not trigger compositor
     binds). Use it to drive the owner's configured workflows: launchers,
-    layout shortcuts, scratchpads."""
+    layout shortcuts, scratchpads. `then` ('desktop'|'screenshot'|'none')
+    appends the result to this call (handy after a launcher bind)."""
     safety.touch("use_bind")
     bind = hyprctl.find_bind(combo)
     if bind is None:
         raise ValueError(f"no keybind {combo!r}; call binds() for the exact combos")
     action, arg = bind["action"], bind.get("arg", "")
     hyprctl.dispatch(action, *([arg] if arg else []))
-    return f"ran {bind['combo']}: {action} {arg}".rstrip()
+    return _acted(f"ran {bind['combo']}: {action} {arg}".rstrip(), then)
 
 
 _WAIT_EVENTS = {
