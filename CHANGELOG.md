@@ -6,6 +6,20 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Added
+- `ui` tool: read a window's AT-SPI accessibility tree and return its
+  clickable elements by accessible name with exact global coordinates and
+  no screenshot, for GTK/Qt apps that expose one. Read through the `busctl`
+  CLI (no new Python dependencies), correlating the a11y app to the window
+  by connection PID (frame-title fallback for multi-process apps) and
+  mapping window-relative extents to global through the window's hyprctl
+  position (AT-SPI screen coordinates are unreliable on Wayland). It is an
+  observation tool (available in read-only mode) and returns a
+  fall-back-to-vision message when an app exposes nothing (terminals,
+  Electron/Chrome without `--force-renderer-accessibility`). Grounded in
+  the GUI-agent literature (OSWorld, UFO, Agent-S); see the README
+  Research section.
+
 ## [0.6.0] - 2026-07-17
 
 ### Added
