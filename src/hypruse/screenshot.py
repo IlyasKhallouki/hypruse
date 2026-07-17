@@ -25,6 +25,10 @@ class ScreenshotError(RuntimeError):
 
 _REGION = re.compile(r"^\s*(-?\d+)\s*,\s*(-?\d+)\s*[, ]\s*(\d+)\s*x\s*(\d+)\s*$")
 
+_SIZE = re.compile(r"^\s*(\d+)\s*x\s*(\d+)\s*$")
+
+DEFAULT_ZOOM_SIZE = "480x360"
+
 
 def parse_region(region: str) -> tuple[int, int, int, int]:
     """Accepts 'x,y,WxH' or 'x,y WxH' (grim's own format)."""
@@ -35,6 +39,49 @@ def parse_region(region: str) -> tuple[int, int, int, int]:
     if w <= 0 or h <= 0:
         raise ScreenshotError(f"bad region {region!r}: empty size")
     return x, y, w, h
+
+
+def parse_size(size: str) -> tuple[int, int]:
+    """Accepts 'WxH'."""
+    m = _SIZE.match(size)
+    if not m:
+        raise ScreenshotError(f"bad size {size!r}, expected 'WxH'")
+    w, h = map(int, m.groups())
+    if w <= 0 or h <= 0:
+        raise ScreenshotError(f"bad size {size!r}: empty size")
+    return w, h
+
+
+def clamp_box(
+    x: float, y: float, w: int, h: int, bounds: tuple[int, int, int, int]
+) -> tuple[int, int, int, int]:
+    """Center a w x h box on (x, y), slid fully inside bounds and shrunk
+    only when the box is larger than the bounds themselves."""
+    bx, by, bw, bh = bounds
+    w, h = min(w, bw), min(h, bh)
+    x0 = min(max(round(x - w / 2), bx), bx + bw - w)
+    y0 = min(max(round(y - h / 2), by), by + bh - h)
+    return x0, y0, w, h
+
+
+def zoom_region(x: float, y: float, size: str = "", window: str = "") -> tuple[int, int, int, int]:
+    """The capture box for zooming at a point of interest: `size` (default
+    DEFAULT_ZOOM_SIZE) centered on (x, y) in global logical pixels, clamped
+    inside the window (when given) or the monitor containing the point,
+    falling back to the focused monitor for an off-layout estimate."""
+    w, h = parse_size(size or DEFAULT_ZOOM_SIZE)
+    if window:
+        active = (hyprctl.query("activewindow") or {}).get("address")
+        c = _find_window(window, hyprctl.query("clients"), active)
+        (bx, by), (bw, bh) = c["at"], c["size"]
+    else:
+        monitors = hyprctl.query("monitors")
+        m = next(
+            (m for m in monitors if _contains(_logical_rect(m), x, y)),
+            None,
+        ) or next((m for m in monitors if m.get("focused")), monitors[0])
+        bx, by, bw, bh = _logical_rect(m)
+    return clamp_box(x, y, w, h, (bx, by, bw, bh))
 
 
 def _grim(args: list[str]) -> bytes:
@@ -123,9 +170,25 @@ def _cap_scale(physical_long_edge: float, max_edge: int | None) -> float:
     return max_edge / physical_long_edge
 
 
+def _logical_rect(m: dict[str, Any]) -> tuple[int, int, int, int]:
+    """A monitor's rect in global logical coordinates. hyprctl reports
+    width/height as physical mode pixels, so the logical footprint is
+    size/scale, with the axes swapped by 90/270-degree transforms."""
+    scale = float(m.get("scale", 1.0)) or 1.0
+    w, h = m["width"] / scale, m["height"] / scale
+    if int(m.get("transform", 0)) % 2:
+        w, h = h, w
+    return m["x"], m["y"], round(w), round(h)
+
+
+def _contains(rect: tuple[int, int, int, int], x: float, y: float) -> bool:
+    rx, ry, rw, rh = rect
+    return rx <= x < rx + rw and ry <= y < ry + rh
+
+
 def _scale_at(x: int, y: int, monitors: list[dict[str, Any]]) -> float:
     for m in monitors:
-        if m["x"] <= x < m["x"] + m["width"] and m["y"] <= y < m["y"] + m["height"]:
+        if _contains(_logical_rect(m), x, y):
             return float(m.get("scale", 1.0))
     return 1.0
 

@@ -27,6 +27,17 @@ def test_scale_lookup_per_monitor():
     assert screenshot._scale_at(99999, 0, MONITORS) == 1.0  # off-layout → neutral
 
 
+def test_scale_lookup_uses_logical_bounds():
+    # HiDPI 2880x1800 @ 1.5 ends logically at x=1920, where the FHD begins:
+    # a point on the FHD must not be claimed via the HiDPI's mode width
+    seam = [
+        {"name": "eDP-1", "x": 0, "y": 0, "width": 2880, "height": 1800, "scale": 1.5},
+        {"name": "DP-1", "x": 1920, "y": 0, "width": 1920, "height": 1080, "scale": 1.0},
+    ]
+    assert screenshot._scale_at(2500, 500, seam) == 1.0
+    assert screenshot._scale_at(1900, 500, seam) == 1.5
+
+
 def test_find_window_active_and_missing():
     clients = [{"address": "0xa", "at": [0, 0], "size": [10, 10]}]
     assert screenshot._find_window("active", clients, "0xa")["address"] == "0xa"

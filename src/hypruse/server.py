@@ -45,12 +45,14 @@ screenshot returns a file path instead of an image, read that file.
 
 Clicking precisely is hard: estimating a target's pixel from a full-screen
 image is only accurate to within tens of pixels, which misses small
-controls. For anything small, work coarse-to-fine: screenshot the window or a `region`
-around the target first. A region comes back near 1:1 (scale ~1.0) with the
-target large and its origin in `geometry`, so global = geometry[:2] +
-image_pixel lands cleanly. Estimate by proportion (e.g. "60% across a
-300px-wide crop → x≈180"), not absolute guessing, and after a click that
-should change something, screenshot again to confirm before continuing.
+controls. For anything small, work coarse-to-fine: screenshot the window,
+estimate the target's global point, then call `zoom` at that point and
+re-estimate on the zoomed image before clicking. Zoomed captures come back
+near 1:1 (scale ~1.0) with the target large and their origin in `geometry`,
+so global = geometry[:2] + image_pixel lands cleanly. Estimate by
+proportion (e.g. "60% across a 300px-wide crop → x≈180"), not absolute
+guessing, and after a click that should change something, screenshot again
+to confirm before continuing.
 
 The cursor and keyboard focus are SHARED with the human at the desk:
 finish what you start, and expect every action to be visible."""
@@ -60,8 +62,8 @@ READONLY = os.environ.get("HYPRUSE_READONLY", "").lower() in ("1", "true", "yes"
 _READONLY_NOTE = """
 
 READ-ONLY MODE is active: only observation tools are available
-(desktop, screenshot, binds, wait_for). Input, window-management, and
-use_bind are disabled by the user."""
+(desktop, screenshot, zoom, binds, wait_for). Input, window-management,
+and use_bind are disabled by the user."""
 
 mcp = FastMCP("hypruse", instructions=INSTRUCTIONS + (_READONLY_NOTE if READONLY else ""))
 
@@ -88,14 +90,11 @@ def desktop() -> dict[str, Any]:
     return hyprctl.snapshot()
 
 
-@mcp.tool()
-def screenshot(window: str = "", region: str = "", scale: float = 0) -> list[Any]:
-    """Capture the focused monitor, a window (`window`: "active" or an
-    address from desktop, cheapest for reading one app), or a `region`
-    "x,y,WxH". Returns the image (or a file path to read) + JSON metadata
-    with geometry/scale for pixel→global mapping. `scale` 0.1-1.0:
-    optional deliberate downscale, usually leave unset."""
-    safety.touch("screenshot")
+def _deliver_capture(
+    window: str = "", region: str = "", scale: float = 0.0, extra: dict[str, Any] | None = None
+) -> list[Any]:
+    """Capture and package for MCP transport: inline image + metadata in
+    image mode, a saved file path + metadata otherwise."""
     if os.environ.get("HYPRUSE_SCREENSHOT_MODE", "file") == "image":
         # Fit the transport budget (base64 adds ~33%; Claude Desktop caps
         # results at 1 MB) by degrading format before resolution.
@@ -104,6 +103,7 @@ def screenshot(window: str = "", region: str = "", scale: float = 0) -> list[Any
         data, meta = shot.capture(
             window, region, scale=scale, max_bytes=budget, max_edge=max_edge
         )
+        meta.update(extra or {})
         image_block = ImageContent(
             type="image",
             data=base64.b64encode(data).decode(),
@@ -111,6 +111,7 @@ def screenshot(window: str = "", region: str = "", scale: float = 0) -> list[Any
         )
         return [image_block, TextContent(type="text", text=json.dumps(meta))]
     data, meta = shot.capture(window, region, scale=scale)
+    meta.update(extra or {})
     d = _runtime_dir()
     path = d / f"shot-{int(time.time() * 1000)}.{meta['format']}"
     path.write_bytes(data)
@@ -121,6 +122,34 @@ def screenshot(window: str = "", region: str = "", scale: float = 0) -> list[Any
         ),
         TextContent(type="text", text=json.dumps(meta)),
     ]
+
+
+@mcp.tool()
+def screenshot(window: str = "", region: str = "", scale: float = 0) -> list[Any]:
+    """Capture the focused monitor, a window (`window`: "active" or an
+    address from desktop, cheapest for reading one app), or a `region`
+    "x,y,WxH". Returns the image (or a file path to read) + JSON metadata
+    with geometry/scale for pixel→global mapping. `scale` 0.1-1.0:
+    optional deliberate downscale, usually leave unset. Before clicking a
+    small control, follow with `zoom` at the estimated point."""
+    safety.touch("screenshot")
+    return _deliver_capture(window, region, scale=scale)
+
+
+@mcp.tool()
+def zoom(x: float, y: float, size: str = "", window: str = "") -> list[Any]:
+    """Native-resolution re-capture around a point: the precision step of
+    the coarse-to-fine loop. Screenshot first, estimate the target's global
+    x,y, zoom there, re-estimate on the zoomed image (scale ~1.0, so
+    global = geometry[:2] + image_pixel), then click. `size` "WxH" in
+    logical pixels (default 480x360) is clamped to the screen; `window`
+    (an address from desktop) clamps to that window instead. The metadata
+    echoes the requested point back as `point`."""
+    safety.touch("zoom")
+    rx, ry, rw, rh = shot.zoom_region(x, y, size, window)
+    return _deliver_capture(
+        region=f"{rx},{ry},{rw}x{rh}", extra={"target": "zoom", "point": [x, y]}
+    )
 
 
 def pointer(
@@ -406,7 +435,8 @@ def wait_for(event: str, match: str = "", timeout_s: float = 10) -> dict[str, An
 
 
 # Acting tools register only outside read-only mode; observation tools
-# (desktop, screenshot, binds, wait_for) are decorated above and always on.
+# (desktop, screenshot, zoom, binds, wait_for) are decorated above and
+# always on.
 if not READONLY:
     for _acting_tool in (pointer, keyboard, hypr, launch, use_bind):
         mcp.tool()(_acting_tool)

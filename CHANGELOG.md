@@ -6,6 +6,27 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Added
+- `zoom` tool: native-resolution re-capture around an estimated global
+  point (`x,y`, optional `size` "WxH" and window clamp), returning the
+  same pixel-to-global mapping metadata as `screenshot` plus the echoed
+  `point`. This promotes the coarse-to-fine precision loop from a usage
+  convention in the server instructions to a first-class primitive, the
+  mechanism vendor computer-use implementations and the GUI-agents
+  literature converged on (see the README Research section).
+
+### Changed
+- Roadmap: OCR click-by-text is dropped in favor of the zoom loop; the
+  README gains a Research section with the sources behind the decision.
+
+### Fixed
+- Screenshot metadata could stamp the wrong `scale` near monitor seams on
+  multi-monitor layouts with fractional scaling: monitor containment
+  treated hyprctl's physical mode width/height as logical bounds. Monitor
+  rects are now derived logically (size divided by scale, axes swapped
+  for 90/270-degree transforms); `zoom` uses the same logical rects for
+  clamping and monitor selection.
+
 ## [0.2.1] - 2026-07-16
 
 ### Fixed

@@ -77,3 +77,21 @@ def test_screenshot_roundtrip_image_mode():
     assert len(raw) <= 700_000, "image mode must respect the transport budget"
     metas = [c.text for c in result.content if isinstance(c, TextContent)]
     assert "geometry" in metas[-1]
+
+
+@needs_hyprland
+def test_zoom_roundtrip_file_mode():
+    result = call("zoom", {"x": 400, "y": 300}, "file")
+    assert not result.isError, result.content
+    texts = [c.text for c in result.content if isinstance(c, TextContent)]
+    meta = json.loads(texts[-1])
+    assert meta["target"] == "zoom"
+    assert meta["point"] == [400, 300]
+    assert meta["geometry"][2:] == [480, 360]
+    # native resolution: image size is the logical box times the monitor
+    # scale (whatever that scale is), per the mapping contract
+    assert abs(meta["image"][0] - 480 * meta["scale"]) <= 2
+    assert abs(meta["image"][1] - 360 * meta["scale"]) <= 2
+    path = texts[0].split()[-1]
+    with open(path, "rb") as f:
+        assert f.read(8) == PNG_MAGIC
