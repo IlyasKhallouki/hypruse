@@ -6,6 +6,8 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-07-17
+
 ### Added
 - `clipboard` tool, opt-in via `HYPRUSE_CLIPBOARD=1` (and never in
   read-only mode): read or write the text clipboard through wl-clipboard.
