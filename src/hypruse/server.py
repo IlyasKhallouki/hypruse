@@ -22,7 +22,7 @@ from typing import Any
 from mcp.server.fastmcp import FastMCP
 from mcp.types import ImageContent, TextContent
 
-from hypruse import __version__, events, hyprctl, safety, session
+from hypruse import __version__, a11y, events, hyprctl, safety, session
 from hypruse import clipboard as clip
 from hypruse import input as hinput
 from hypruse import screenshot as shot
@@ -31,10 +31,13 @@ INSTRUCTIONS = """\
 hypruse controls a live Hyprland desktop. Workflow: call `desktop` first
 and prefer `hypr`/`launch` (IPC, instant and exact) for anything window-
 or workspace-shaped; use `screenshot` + `pointer`/`keyboard` only to see
-and operate inside application windows. To verify an effect without a
-second round-trip, pass `then='desktop'` (a fresh snapshot) or
-`then='screenshot'` to the acting call itself instead of calling `desktop`
-again. `binds` lists the owner's own keybinds; to run one, call
+and operate inside application windows. For apps that expose an
+accessibility tree (many GTK/Qt apps), `ui` returns clickable elements by
+NAME with exact coordinates and no screenshot, cheaper and more precise
+than vision; fall back to screenshot + zoom when it returns nothing. To
+verify an effect without a second round-trip, pass `then='desktop'` (a
+fresh snapshot) or `then='screenshot'` to the acting call itself instead
+of calling `desktop` again. `binds` lists the owner's own keybinds; to run one, call
 `use_bind` with its combo (synthetic keypresses do NOT trigger compositor
 binds, so `keyboard` is only for shortcuts the focused app handles). After
 actions with delayed effects, block on `wait_for` (window_open,
@@ -187,6 +190,61 @@ def zoom(
         extra={"target": "zoom", "point": [x, y]},
         stable=stable,
     )
+
+
+def _resolve_window(window: str) -> dict[str, Any]:
+    """The hyprctl client for a window address ('' or 'active' = focused)."""
+    clients = hyprctl.query("clients")
+    target = window
+    if not window or window == "active":
+        target = (hyprctl.query("activewindow") or {}).get("address")
+    if not target:
+        raise ValueError("no active window; pass a window address from desktop()")
+    client = next((c for c in clients if c.get("address") == target), None)
+    if client is None:
+        raise ValueError(f"window {target!r} not found, call desktop() for current addresses")
+    return client
+
+
+@mcp.tool()
+def ui(window: str = "", name: str = "", actionable: bool = True) -> list[Any] | str:
+    """Read a window's accessibility tree (AT-SPI) and return its elements
+    with GLOBAL click points, so you can target a control by NAME with no
+    screenshot and no pixel guessing. `window` is an address from desktop
+    (default: the focused window). `name` filters to elements whose
+    accessible name contains it (case-insensitive); `actionable` (default)
+    keeps only interactive roles (buttons, entries, menu items, ...).
+    Returns [{role, name, x, y, clickable}] where x,y is the click point:
+    focus the window, then click it with `pointer` (the window must be
+    visible to receive the click). Not every app exposes a tree (terminals,
+    and Electron/Chrome without --force-renderer-accessibility, expose
+    little or nothing); when it does not, fall back to screenshot + zoom."""
+    safety.touch("ui")
+    client = _resolve_window(window)
+    try:
+        bus = a11y.connect()
+    except a11y.A11yError as exc:
+        return f"no accessibility bus: {exc}; use screenshot + zoom instead"
+    app = a11y.app_for_pid(bus, client.get("pid"), client.get("title", ""))
+    if app is None:
+        cls = client.get("class", "this window")
+        return f"{cls} exposes no accessibility tree; use screenshot + zoom instead"
+    elements = a11y.find_elements(bus, app[0], app[1], name=name, actionable=actionable)
+    ax, ay = client["at"]
+    out = [
+        {
+            "role": e["role"],
+            "name": e["name"],
+            "x": ax + e["extent"][0] + e["extent"][2] // 2,
+            "y": ay + e["extent"][1] + e["extent"][3] // 2,
+            "clickable": e["clickable"],
+        }
+        for e in elements
+    ]
+    if not out:
+        what = f"matching {name!r}" if name else "actionable"
+        return f"no {what} elements in {client.get('class', 'the window')}"
+    return out
 
 
 _OBSERVE_MODES = ("none", "desktop", "screenshot")

@@ -5,7 +5,7 @@ import pytest
 
 from hypruse import server as srv
 
-OBSERVE = {"desktop", "screenshot", "zoom", "binds", "wait_for"}
+OBSERVE = {"desktop", "screenshot", "zoom", "ui", "binds", "wait_for"}
 ACT = {"pointer", "keyboard", "hypr", "launch", "use_bind", "sequence"}
 
 
