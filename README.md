@@ -157,11 +157,33 @@ The input e2e is deliberately manual: it borrows your cursor and keyboard, count
 
 ## Roadmap
 
-- Zoom-loop precision benchmark: measure click accuracy of the coarse-to-fine loop against known targets in the e2e suite
-- Headless-Hyprland end-to-end tests in CI
-- sway / niri support: the wire client already speaks the wlr protocols; what remains is an IPC layer alongside `hyprctl.py` (contributions welcome)
-- AT-SPI element tree: click by accessible name, read GTK/Qt UIs without vision
-- Multi-monitor and fractional-scaling hardening
+Grounded in measured hot-path latencies and the finding that LLM calls are 76 to 96% of computer-use task latency ([OSWorld-Human](https://arxiv.org/abs/2506.16042)), so cutting round-trips beats shaving milliseconds.
+
+**Faster**
+
+- JPEG-default captures: default screenshots to JPEG q90 instead of PNG (measured ~13x faster full-monitor capture, ~640 ms to ~50 ms, and ~3x smaller payload), keeping lossless PNG on request. Also speeds the wait-for-stable poll, which inherits the format.
+- Quality-first fit ladder: under a byte budget, step JPEG quality down before ever downscaling, since grim's convolution downscale is slower than a full-res capture.
+- Leaner `desktop()`: collapse its five `hyprctl` forks into one `hyprctl --batch` (~28 ms to ~12 ms) and fold in the focused window, per-window workspace, and a recent-events tail.
+- In-process wlr-screencopy over the raw wire (as input already works): drop grim's fork floor from small captures and add damage-tracked wait-for-stable that returns the instant the screen settles.
+
+**Fewer round-trips**
+
+- `sequence` tool: run an ordered list of actions (click, type, key, wait) in one call, aborting the moment the compositor reports an unexpected change. Abort-on-change keeps a shared seat safe.
+- Act-and-observe fusion: let any action append a fresh semantic `desktop` snapshot to its result, so the agent sees the effect without a second screenshot round-trip.
+- Semantic screen diff: after an action, return only what changed (window topology from the event stream, or a bounded changed-region crop) instead of a full frame.
+
+**More reach**
+
+- AT-SPI element tree via `busctl`: read GTK/Qt widget trees and click by accessible name at exact coordinates with no screenshot, mapping window-relative extents to global through the hyprctl geometry hypruse already has. No new Python dependencies; vision stays the fallback.
+- `record` tool: a scoped GIF or mp4 of the agent driving the desktop, via wf-recorder (a wlroots-family binary like grim).
+- Notifications: list recent desktop notifications and block on the next match, like `wait_for` for notifications.
+- Action journal, replay, and dry-run: an auditable NDJSON record of every action, replayable, with a validate-only mode.
+
+**Platform**
+
+- sway / niri support: the wire client already speaks the wlr protocols; what remains is an IPC layer alongside `hyprctl.py` (contributions welcome).
+- Headless end-to-end tests in CI: needs a QEMU virtio-gpu VM, since Hyprland's aquamarine backend requires a real GPU render node that hosted runners lack.
+- Zoom-loop precision benchmark: measure click accuracy of the coarse-to-fine loop against known targets.
 
 ## Related projects
 
