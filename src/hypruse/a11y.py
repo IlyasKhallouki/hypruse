@@ -70,7 +70,10 @@ def _busctl(address: str, verb: str, *args: str) -> Any:
     # itself lives on the private bus reached with --address
     where = ["--address", address] if address else ["--user"]
     argv = ["busctl", "--json=short", *where, verb, *args]
-    proc = subprocess.run(argv, capture_output=True, text=True, timeout=10)
+    try:
+        proc = subprocess.run(argv, capture_output=True, text=True, timeout=10)
+    except subprocess.TimeoutExpired as exc:
+        raise A11yError(f"busctl {verb} timed out (unresponsive app?)") from exc
     if proc.returncode != 0:
         raise A11yError(f"busctl {verb} failed: {proc.stderr.strip() or proc.stdout.strip()}")
     try:
@@ -141,6 +144,33 @@ def _has_frame_named(bus: Bus, svc: str, path: str, title: str) -> bool:
     return any(_name(bus, cs, cp) == title for cs, cp in _children(bus, svc, path))
 
 
+def window_frame(
+    bus: Bus,
+    app_svc: str,
+    app_path: str,
+    title: str = "",
+    size: tuple[int, int] | None = None,
+) -> tuple[str, str]:
+    """The app's toplevel matching a SPECIFIC window (by accessible name ==
+    title, then by extent size), so a multi-window app's OTHER windows are
+    not walked and mapped with the wrong origin. Returns the app root when
+    there is a single toplevel or no confident match (walking from the root
+    is then correct or the best available)."""
+    frames = _children(bus, app_svc, app_path)
+    if len(frames) <= 1:
+        return (app_svc, app_path)
+    if title:
+        for fs, fp in frames:
+            if _name(bus, fs, fp) == title:
+                return (fs, fp)
+    if size:
+        for fs, fp in frames:
+            ext = _window_extents(bus, fs, fp)
+            if ext and (ext[2], ext[3]) == tuple(size):
+                return (fs, fp)
+    return (app_svc, app_path)
+
+
 def _name(bus: Bus, svc: str, path: str) -> str:
     try:
         return str(bus.prop(svc, path, _ACCESSIBLE, "Name") or "")
@@ -202,12 +232,14 @@ def find_elements(
     actionable: bool = True,
     max_nodes: int = 400,
     max_results: int = 60,
-) -> list[dict[str, Any]]:
-    """Depth-first over an app's tree, returning matching elements with
-    WINDOW-relative extents (the caller adds the window origin). Filters by
-    `name` substring (case-insensitive) and, when `actionable`, to
-    interactive roles. Bounded by max_nodes / max_results so a huge app
-    cannot hang the call."""
+) -> tuple[list[dict[str, Any]], bool]:
+    """Depth-first over a window's subtree, returning (matching elements,
+    truncated). Elements carry WINDOW-relative extents (the caller adds the
+    window origin). Filters by `name` substring (case-insensitive) and, when
+    `actionable`, to interactive roles. `truncated` is True when the walk hit
+    the max_nodes budget before exhausting the tree, so the caller can tell
+    'nothing there' from 'stopped early' instead of reporting a false
+    absence."""
     needle = name.lower()
     results: list[dict[str, Any]] = []
     stack: list[tuple[str, str]] = [(app_svc, app_path)]
@@ -238,7 +270,8 @@ def find_elements(
                 "path": path,
             }
         )
-    return results
+    truncated = visited >= max_nodes and bool(stack) and len(results) < max_results
+    return results, truncated
 
 
 def do_action(bus: Bus, svc: str, path: str, index: int = 0) -> bool:

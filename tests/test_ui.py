@@ -14,7 +14,11 @@ class FakeBus:
 def wired(monkeypatch):
     monkeypatch.setattr(srv.safety, "touch", lambda *a: None)
     monkeypatch.setattr(srv.a11y, "connect", lambda: FakeBus())
-    clients = [{"address": "0xw", "pid": 42, "at": [100, 200], "class": "yad", "title": "T"}]
+    monkeypatch.setattr(srv.a11y, "window_frame", lambda bus, s, p, title, size: (s, p))
+    clients = [
+        {"address": "0xw", "pid": 42, "at": [100, 200], "size": [400, 200],
+         "class": "yad", "title": "T"}
+    ]
     monkeypatch.setattr(
         srv.hyprctl,
         "query",
@@ -28,9 +32,10 @@ def test_ui_maps_window_extent_to_global(wired):
     wired.setattr(
         srv.a11y,
         "find_elements",
-        lambda *a, **k: [
-            {"role": "button", "name": "Save", "extent": (10, 20, 80, 40), "clickable": True}
-        ],
+        lambda *a, **k: (
+            [{"role": "button", "name": "Save", "extent": (10, 20, 80, 40), "clickable": True}],
+            False,
+        ),
     )
     out = srv.ui(window="0xw")
     # global = at + extent origin + half-size: (100+10+40, 200+20+20)
@@ -42,7 +47,7 @@ def test_ui_defaults_to_active_window(wired):
     wired.setattr(
         srv.a11y, "app_for_pid", lambda bus, pid, title: seen.update(pid=pid) or ("a", "/root")
     )
-    wired.setattr(srv.a11y, "find_elements", lambda *a, **k: [])
+    wired.setattr(srv.a11y, "find_elements", lambda *a, **k: ([], False))
     srv.ui()  # no window -> active
     assert seen["pid"] == 42  # resolved the active window's client
 
@@ -64,9 +69,26 @@ def test_ui_app_without_tree_is_friendly(wired):
 
 def test_ui_no_matching_elements_is_friendly(wired):
     wired.setattr(srv.a11y, "app_for_pid", lambda *a: ("a", "/root"))
-    wired.setattr(srv.a11y, "find_elements", lambda *a, **k: [])
+    wired.setattr(srv.a11y, "find_elements", lambda *a, **k: ([], False))
     assert "no matching 'Nope'" in srv.ui(window="0xw", name="Nope")
     assert "no actionable" in srv.ui(window="0xw")
+
+
+def test_ui_truncation_is_surfaced(wired):
+    wired.setattr(srv.a11y, "app_for_pid", lambda *a: ("a", "/root"))
+    wired.setattr(srv.a11y, "find_elements", lambda *a, **k: ([], True))  # truncated
+    assert "large tree" in srv.ui(window="0xw", name="Deep")
+
+
+def test_ui_mid_walk_error_falls_back(wired):
+    # an A11yError AFTER connect() (e.g. registry GetChildren fails) must
+    # still degrade to the friendly message, not crash the tool
+    def boom(*a, **k):
+        raise srv.a11y.A11yError("registry gone")
+
+    wired.setattr(srv.a11y, "app_for_pid", boom)
+    out = srv.ui(window="0xw")
+    assert isinstance(out, str) and "screenshot + zoom" in out
 
 
 def test_resolve_window_errors(monkeypatch):

@@ -137,12 +137,23 @@ def test_ui_roundtrip_reads_a11y_tree():
             if win:
                 break
         assert win, "yad did not launch"
-        result = call("ui", {"window": win["address"]}, "file")
-        assert not result.isError, result.content
-        # FastMCP serializes a list return as one content block per element
-        elements = [json.loads(c.text) for c in result.content if isinstance(c, TextContent)]
+        # the window maps before the app registers in the AT-SPI tree, so
+        # retry until ui returns elements (a list serializes to JSON objects;
+        # the not-yet-registered fallback is a single non-JSON string)
+        elements = []
+        for _ in range(20):
+            result = call("ui", {"window": win["address"]}, "file")
+            assert not result.isError, result.content
+            texts = [c.text for c in result.content if isinstance(c, TextContent)]
+            try:
+                elements = [json.loads(t) for t in texts]
+            except json.JSONDecodeError:
+                elements = []  # fallback string, app not registered yet
+            if elements:
+                break
+            time.sleep(0.3)
         names = {e["name"]: e for e in elements}
-        assert "Approve" in names and "Deny" in names
+        assert "Approve" in names and "Deny" in names, f"ui returned: {texts}"
         ax, ay = win["at"]
         aw, ah = win["size"]
         for e in elements:  # every click point lands inside the window

@@ -221,15 +221,19 @@ def ui(window: str = "", name: str = "", actionable: bool = True) -> list[Any] |
     little or nothing); when it does not, fall back to screenshot + zoom."""
     safety.touch("ui")
     client = _resolve_window(window)
+    title = client.get("title", "")
+    cls = client.get("class", "the window")
     try:
         bus = a11y.connect()
+        app = a11y.app_for_pid(bus, client.get("pid"), title)
+        if app is None:
+            return f"{cls} exposes no accessibility tree; use screenshot + zoom instead"
+        frame = a11y.window_frame(bus, app[0], app[1], title, tuple(client["size"]))
+        elements, truncated = a11y.find_elements(
+            bus, frame[0], frame[1], name=name, actionable=actionable
+        )
     except a11y.A11yError as exc:
-        return f"no accessibility bus: {exc}; use screenshot + zoom instead"
-    app = a11y.app_for_pid(bus, client.get("pid"), client.get("title", ""))
-    if app is None:
-        cls = client.get("class", "this window")
-        return f"{cls} exposes no accessibility tree; use screenshot + zoom instead"
-    elements = a11y.find_elements(bus, app[0], app[1], name=name, actionable=actionable)
+        return f"accessibility read failed: {exc}; use screenshot + zoom instead"
     ax, ay = client["at"]
     out = [
         {
@@ -243,7 +247,8 @@ def ui(window: str = "", name: str = "", actionable: bool = True) -> list[Any] |
     ]
     if not out:
         what = f"matching {name!r}" if name else "actionable"
-        return f"no {what} elements in {client.get('class', 'the window')}"
+        tail = " (stopped after a large tree; try a name filter)" if truncated else ""
+        return f"no {what} elements in {cls}{tail}"
     return out
 
 

@@ -47,13 +47,34 @@ def test_busctl_error_surfaces_stderr(monkeypatch):
 
 
 def test_bus_call_and_prop_shapes(monkeypatch):
-    # call -> data is a list of out-args; get-property -> data is the value
+    # every busctl shape the reader parses: (iiii) struct, a(so) array of
+    # refs, au state words, scalar property. Easy to get subtly wrong.
     monkeypatch.setattr(a11y.shutil, "which", lambda n: "/usr/bin/busctl")
-    outputs = iter(['{"type":"(iiii)","data":[[1,2,3,4]]}', '{"type":"i","data":7}'])
+    outputs = iter(
+        [
+            '{"type":"(iiii)","data":[[1,2,3,4]]}',
+            '{"type":"a(so)","data":[[[":1.5","/a"],[":1.5","/b"]]]}',
+            '{"type":"au","data":[[8,0]]}',
+            '{"type":"i","data":7}',
+        ]
+    )
     monkeypatch.setattr(a11y.subprocess, "run", lambda *a, **k: _fake_proc(next(outputs)))
     bus = a11y.Bus("unix:x")
     assert bus.call("s", "/p", "i", "GetExtents")[0] == [1, 2, 3, 4]
+    assert bus.call("s", "/p", "i", "GetChildren")[0] == [[":1.5", "/a"], [":1.5", "/b"]]
+    assert bus.call("s", "/p", "i", "GetState")[0] == [8, 0]
     assert bus.prop("s", "/p", "i", "ChildCount") == 7
+
+
+def test_busctl_timeout_becomes_a11yerror(monkeypatch):
+    monkeypatch.setattr(a11y.shutil, "which", lambda n: "/usr/bin/busctl")
+
+    def boom(*a, **k):
+        raise subprocess.TimeoutExpired(cmd="busctl", timeout=10)
+
+    monkeypatch.setattr(a11y.subprocess, "run", boom)
+    with pytest.raises(a11y.A11yError, match="timed out"):
+        a11y.bus_address()
 
 
 # --- traversal against a fake tree ---
@@ -118,34 +139,94 @@ def _tree():
 
 def test_find_actionable_only():
     bus, root = _tree()
-    els = a11y.find_elements(bus, *root, actionable=True)
+    els, truncated = a11y.find_elements(bus, *root, actionable=True)
     assert [e["name"] for e in els] == ["Save", "Cancel"]  # label (role 29) excluded
     assert els[0]["extent"] == (10, 100, 80, 30)
+    assert truncated is False
 
 
 def test_clickable_reflects_states():
     bus, root = _tree()
-    els = {e["name"]: e for e in a11y.find_elements(bus, *root)}
+    els = {e["name"]: e for e in a11y.find_elements(bus, *root)[0]}
     assert els["Save"]["clickable"] is True
     assert els["Cancel"]["clickable"] is False  # missing showing+sensitive
 
 
 def test_name_filter_is_case_insensitive_substring():
     bus, root = _tree()
-    els = a11y.find_elements(bus, *root, name="canc", actionable=False)
+    els, _ = a11y.find_elements(bus, *root, name="canc", actionable=False)
     assert [e["name"] for e in els] == ["Cancel"]
 
 
 def test_name_filter_finds_nonactionable_too():
     bus, root = _tree()
-    assert [e["name"] for e in a11y.find_elements(bus, *root, name="label", actionable=False)] == [
-        "Some label"
-    ]
+    els, _ = a11y.find_elements(bus, *root, name="label", actionable=False)
+    assert [e["name"] for e in els] == ["Some label"]
+
+
+def test_name_match_still_excluded_when_role_not_actionable():
+    # a label matches the name but is not actionable: with actionable=True
+    # it must be dropped, not returned
+    bus, root = _tree()
+    els, _ = a11y.find_elements(bus, *root, name="label", actionable=True)
+    assert els == []
 
 
 def test_max_results_caps_output():
     bus, root = _tree()
-    assert len(a11y.find_elements(bus, *root, actionable=True, max_results=1)) == 1
+    els, _ = a11y.find_elements(bus, *root, actionable=True, max_results=1)
+    assert len(els) == 1
+
+
+def test_max_nodes_truncation_is_signalled():
+    # a linear chain of panels ending in a button, walked with a tiny budget:
+    # the button is beyond the frontier, so results empty AND truncated True
+    nodes = {}
+    for i in range(10):
+        child = ("app", f"/n{i + 1}") if i < 9 else ("app", "/btn")
+        nodes[("app", f"/n{i}")] = {"role": 39, "name": "", "children": [child]}
+    nodes[("app", "/btn")] = {"role": 43, "name": "Deep", "extent": (0, 0, 1, 1),
+                              "states": ALL_STATES, "children": []}
+    bus = FakeBus(nodes)
+    els, truncated = a11y.find_elements(bus, "app", "/n0", actionable=True, max_nodes=3)
+    assert els == [] and truncated is True
+
+
+def test_element_without_component_is_skipped():
+    # GetExtents raising (no Component interface) drops the element quietly
+    nodes = {
+        ("app", "/root"): {"role": 75, "name": "app", "children": [("app", "/b")]},
+        ("app", "/b"): {"role": 43, "name": "NoComp", "extent": None,
+                        "states": ALL_STATES, "children": []},
+    }
+
+    class NoCompBus(FakeBus):
+        def call(self, svc, path, iface, method, *sig):
+            if method == "GetExtents":
+                raise a11y.A11yError("no Component")
+            return super().call(svc, path, iface, method, *sig)
+
+    els, _ = a11y.find_elements(NoCompBus(nodes), "app", "/root", actionable=True)
+    assert els == []
+
+
+def test_window_frame_scopes_multi_window_app():
+    # one app, two toplevels; the walk must scope to the requested one
+    nodes = {
+        ("app", "/root"): {"role": 75, "name": "app", "children": [("app", "/f1"), ("app", "/f2")]},
+        ("app", "/f1"): {"role": 23, "name": "Doc A", "extent": (0, 0, 400, 300), "children": []},
+        ("app", "/f2"): {"role": 23, "name": "Doc B", "extent": (0, 0, 800, 600), "children": []},
+    }
+    bus = FakeBus(nodes)
+    assert a11y.window_frame(bus, "app", "/root", title="Doc B") == ("app", "/f2")
+    assert a11y.window_frame(bus, "app", "/root", size=(400, 300)) == ("app", "/f1")
+    # no confident match -> app root (best effort)
+    assert a11y.window_frame(bus, "app", "/root", title="Doc C") == ("app", "/root")
+
+
+def test_window_frame_single_toplevel_uses_root():
+    bus, root = _tree()  # app -> one frame
+    assert a11y.window_frame(bus, *root, title="anything") == root
 
 
 def test_app_for_pid_exact_match(monkeypatch):
