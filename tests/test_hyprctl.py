@@ -103,3 +103,65 @@ def test_query_raises_on_garbage(monkeypatch):
     monkeypatch.setattr(hyprctl, "_run", lambda *a: "not json at all")
     with pytest.raises(hyprctl.HyprctlError, match="unparseable"):
         hyprctl.query("clients")
+
+
+def test_batch_query_splits_concatenated_json(monkeypatch):
+    # hyprctl concatenates the documents (arrays and objects, various spacing)
+    seen = {}
+    fake = '[{"id": 0}]\n[{"id": 2}]  [{"address": "0xa"}]{"address": "0xa"}\n{"x": 5, "y": 9}'
+
+    def run(*args):
+        seen["args"] = args
+        return fake
+
+    monkeypatch.setattr(hyprctl, "_run", run)
+    vals = hyprctl.batch_query(["monitors", "workspaces", "clients", "activewindow", "cursorpos"])
+    assert seen["args"] == (
+        "--batch",
+        "j/monitors ; j/workspaces ; j/clients ; j/activewindow ; j/cursorpos",
+    )
+    assert [type(v).__name__ for v in vals] == ["list", "list", "list", "dict", "dict"]
+    assert vals[4] == {"x": 5, "y": 9}
+
+
+def test_batch_query_wrong_count_raises(monkeypatch):
+    monkeypatch.setattr(hyprctl, "_run", lambda *a: "[]")  # one doc for two commands
+    with pytest.raises(hyprctl.HyprctlError, match="returned 1 results for 2"):
+        hyprctl.batch_query(["monitors", "workspaces"])
+
+
+def test_batch_query_garbage_raises(monkeypatch):
+    monkeypatch.setattr(hyprctl, "_run", lambda *a: "not json")
+    with pytest.raises(hyprctl.HyprctlError, match="unparseable"):
+        hyprctl.batch_query(["monitors"])
+
+
+def test_snapshot_uses_one_batched_call(monkeypatch):
+    calls = {"batch": 0, "query": 0}
+
+    def fake_batch(cmds):
+        calls["batch"] += 1
+        return [
+            FIX["monitors"],
+            FIX["workspaces"],
+            FIX["clients"],
+            FIX["activewindow"],
+            {"x": FIX["cursorpos"]["x"], "y": FIX["cursorpos"]["y"]},
+        ]
+
+    monkeypatch.setattr(hyprctl, "batch_query", fake_batch)
+    monkeypatch.setattr(hyprctl, "query", lambda c: calls.__setitem__("query", calls["query"] + 1))
+    s = hyprctl.snapshot()
+    assert calls == {"batch": 1, "query": 0}  # one batched call, no per-command queries
+    assert s["cursor"] == [640, 400]
+    assert s["active_window"] == "0xaaaa000000000001"
+
+
+def test_snapshot_handles_no_active_window(monkeypatch):
+    monkeypatch.setattr(
+        hyprctl,
+        "batch_query",
+        lambda cmds: [FIX["monitors"], FIX["workspaces"], [], {}, {"x": 0, "y": 0}],
+    )
+    s = hyprctl.snapshot()
+    assert s["active_window"] is None  # empty activewindow object -> None

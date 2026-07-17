@@ -118,7 +118,7 @@ Read this section before installing. **hypruse hands an agent your mouse, your k
 ## Performance
 
 Measured on a live session (Hyprland 0.55, 1080p, 20 windows): `desktop`
-~30 ms, workspace/window dispatch ~10-20 ms, full-monitor screenshot ~50 ms
+~20 ms (one batched `hyprctl` call), workspace/window dispatch ~10-20 ms, full-monitor screenshot ~50 ms
 (fast JPEG default; ~440 ms if you ask for lossless PNG), region/zoom
 captures well under that. If tool
 calls *feel* slow, it is almost certainly the MCP **approval prompt** in
@@ -165,7 +165,6 @@ Grounded in measured hot-path latencies and the finding that LLM calls are 76 to
 
 **Faster**
 
-- Leaner `desktop()`: collapse its five `hyprctl` forks into one `hyprctl --batch` (~28 ms to ~12 ms) and fold in the focused window, per-window workspace, and a recent-events tail.
 - In-process wlr-screencopy over the raw wire (as input already works): drop grim's fork floor from small captures and add damage-tracked wait-for-stable that returns the instant the screen settles.
 
 **Fewer round-trips**
