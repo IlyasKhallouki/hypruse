@@ -6,6 +6,8 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.4.1] - 2026-07-17
+
 ### Fixed
 - Multi-monitor and fractional-scaling hardening: `desktop` now reports
   monitor `geometry` in global logical coordinates (the same space window

@@ -1,6 +1,6 @@
 [project]
 name = "hypruse"
-version = "0.4.0"
+version = "0.4.1"
 description = "Computer use for Hyprland: semantic desktop state over IPC plus vision and native Wayland input, in one MCP server"
 readme = "README.md"
 requires-python = ">=3.11"
