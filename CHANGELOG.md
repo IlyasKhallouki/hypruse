@@ -6,6 +6,8 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-07-17
+
 ### Added
 - `zoom` tool: native-resolution re-capture around an estimated global
   point (`x,y`, optional `size` "WxH" and window clamp), returning the
