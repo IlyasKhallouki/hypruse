@@ -6,6 +6,20 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Added
+- `clipboard` tool, opt-in via `HYPRUSE_CLIPBOARD=1` (and never in
+  read-only mode): read or write the text clipboard through wl-clipboard.
+  Default installs keep the documented no-clipboard-access posture.
+- `stable` parameter on `screenshot` and `zoom`: capture repeatedly (up
+  to 2s) until two consecutive frames are byte-identical, so a capture
+  right after an action does not land mid-animation; the metadata
+  reports `stable` true/false.
+
+### Changed
+- Whole-notch scrolls now go out as discrete axis events (axis_discrete
+  on the virtual-pointer wire), so applications that step per wheel
+  click see real notches; fractional deltas keep the continuous path.
+
 ## [0.3.0] - 2026-07-17
 
 ### Added

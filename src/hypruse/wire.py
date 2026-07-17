@@ -106,6 +106,30 @@ def _now_ms() -> int:
     return int(time.monotonic() * 1000) & 0xFFFFFFFF
 
 
+def scroll_messages(
+    dy: float = 0.0, dx: float = 0.0, discrete_ok: bool = True
+) -> list[tuple[int, bytes]]:
+    """The (opcode, body) sequence for one wheel scroll. Whole-notch deltas
+    go out as axis_discrete (carrying both the continuous value and the
+    notch count) so applications that step per wheel click see real
+    notches; fractional deltas keep the plain continuous axis event.
+    axis_discrete exists only since protocol v2, so callers bound at v1
+    pass discrete_ok=False to stay on the continuous path."""
+    t = _now_ms()
+    msgs = [(PTR_AXIS_SOURCE, struct.pack("<I", AXIS_SOURCE_WHEEL))]
+    for axis, v in ((AXIS_VERTICAL, dy), (AXIS_HORIZONTAL, dx)):
+        if not v:
+            continue
+        value = to_fixed(v * SCROLL_UNITS_PER_NOTCH)
+        notches = int(round(v))
+        if discrete_ok and notches and abs(v - notches) < 1e-6:
+            msgs.append((PTR_AXIS_DISCRETE, struct.pack("<IIii", t, axis, value, notches)))
+        else:
+            msgs.append((PTR_AXIS, struct.pack("<IIi", t, axis, value)))
+    msgs.append((PTR_FRAME, b""))
+    return msgs
+
+
 # --- live connection ---------------------------------------------------------
 
 
@@ -138,13 +162,16 @@ class VirtualPointer:
         if not match:
             raise WireError(f"compositor does not advertise {MANAGER_INTERFACE}")
         name, version = match[0]
+        # The pointer inherits the manager's negotiated version; axis_discrete
+        # only exists since v2, so remember what we actually bound.
+        self._version = min(version, 2)
         self._manager = self._new_id()
         self._send(
             self._registry,
             0,  # wl_registry.bind
             struct.pack("<I", name)
             + wl_string(MANAGER_INTERFACE)
-            + struct.pack("<II", min(version, 2), self._manager),
+            + struct.pack("<II", self._version, self._manager),
         )
         self._pointer = self._new_id()
         self._send(self._manager, MGR_CREATE_POINTER, struct.pack("<II", 0, self._pointer))
@@ -203,21 +230,8 @@ class VirtualPointer:
 
     def scroll(self, dy: float = 0.0, dx: float = 0.0) -> None:
         """Scroll by wheel notches; positive dy scrolls content down."""
-        self._send(self._pointer, PTR_AXIS_SOURCE, struct.pack("<I", AXIS_SOURCE_WHEEL))
-        t = _now_ms()
-        if dy:
-            self._send(
-                self._pointer,
-                PTR_AXIS,
-                struct.pack("<IIi", t, AXIS_VERTICAL, to_fixed(dy * SCROLL_UNITS_PER_NOTCH)),
-            )
-        if dx:
-            self._send(
-                self._pointer,
-                PTR_AXIS,
-                struct.pack("<IIi", t, AXIS_HORIZONTAL, to_fixed(dx * SCROLL_UNITS_PER_NOTCH)),
-            )
-        self._send(self._pointer, PTR_FRAME)
+        for opcode, body in scroll_messages(dy, dx, discrete_ok=self._version >= 2):
+            self._send(self._pointer, opcode, body)
         self._roundtrip()
 
     def close(self) -> None:

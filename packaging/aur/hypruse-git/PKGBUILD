@@ -8,6 +8,7 @@ arch=('any')
 url="https://github.com/IlyasKhallouki/hypruse"
 license=('MIT')
 depends=('python' 'python-mcp' 'grim' 'wtype')
+optdepends=('wl-clipboard: opt-in clipboard tool (HYPRUSE_CLIPBOARD=1)')
 makedepends=('git' 'python-build' 'python-installer' 'python-wheel' 'python-hatchling')
 provides=('hypruse')
 conflicts=('hypruse')

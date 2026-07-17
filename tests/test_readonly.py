@@ -49,3 +49,13 @@ def test_default_exposes_everything(reloaded):
 def test_env_value_parsing(reloaded, value, expect_readonly):
     names = _tool_names(reloaded(value))
     assert (names == OBSERVE) is expect_readonly
+
+
+def test_clipboard_is_double_gated(reloaded, monkeypatch):
+    # absent by default, present with the opt-in flag, never in read-only
+    assert "clipboard" not in _tool_names(reloaded(None))
+    monkeypatch.setenv("HYPRUSE_CLIPBOARD", "1")
+    assert "clipboard" in _tool_names(reloaded(None))
+    assert _tool_names(reloaded("1")) == OBSERVE
+    monkeypatch.delenv("HYPRUSE_CLIPBOARD")
+    assert "clipboard" not in _tool_names(reloaded(None))

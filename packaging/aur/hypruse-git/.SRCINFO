@@ -14,6 +14,7 @@ pkgbase = hypruse-git
 	depends = python-mcp
 	depends = grim
 	depends = wtype
+	optdepends = wl-clipboard: opt-in clipboard tool (HYPRUSE_CLIPBOARD=1)
 	provides = hypruse
 	conflicts = hypruse
 	source = git+https://github.com/IlyasKhallouki/hypruse.git

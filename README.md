@@ -41,19 +41,20 @@ Design decisions:
 | tool | what it does |
 |---|---|
 | `desktop` | One-call semantic snapshot: monitors, workspaces, windows (address/class/title/geometry), active window, cursor |
-| `screenshot` | Focused monitor, exact window crop by address, or `x,y,WxH` region; returns image + coordinate-mapping metadata |
+| `screenshot` | Focused monitor, exact window crop by address, or `x,y,WxH` region; returns image + coordinate-mapping metadata; `stable=true` waits for the frame to settle |
 | `zoom` | Native-resolution re-capture around an estimated point (optionally clamped to a window): the precision step before clicking small controls, same metadata contract |
-| `pointer` | move / click / drag / scroll in global coordinates |
+| `pointer` | move / click / drag / scroll (discrete wheel notches) in global coordinates |
 | `keyboard` | Type literal text (unicode-safe) or press combos: `ctrl+shift+t`, `super+enter`, `F5` |
 | `hypr` | Switch workspace, focus/move/close windows, fullscreen, floating (pure IPC, milliseconds) |
 | `launch` | Start an app (optionally silent on another workspace), block on its actual `openwindow` event, return its address; detects single-instance apps (browsers) whose window ignores exec rules and moves it to the requested workspace |
 | `binds` | The user's own keybinds, decoded (`SUPER+Q`, action, description); the agent runs one with `use_bind` |
 | `use_bind` | Execute a keybind by combo (`SUPER+F`), running its bound action, so the agent drives the owner's own launchers and shortcuts |
 | `wait_for` | Block on real compositor events (window open/close, workspace change, title change) with a match filter and timeout; replaces sleep-and-hope in multi-step automations |
+| `clipboard` | Read or write the text clipboard via `wl-clipboard`; opt-in, exists only with `HYPRUSE_CLIPBOARD=1` in the server env |
 
 ## Install
 
-Requirements: Hyprland, `grim`, `wtype` (most Hyprland setups already have both), and [uv](https://docs.astral.sh/uv/).
+Requirements: Hyprland, `grim`, `wtype` (most Hyprland setups already have both), and [uv](https://docs.astral.sh/uv/). Optional: `wl-clipboard` for the opt-in clipboard tool.
 
 Arch Linux, from the [AUR](https://aur.archlinux.org/packages/hypruse):
 
@@ -110,7 +111,7 @@ Read this section before installing. **hypruse hands an agent your mouse, your k
 2. **Visibility:** the server maintains an activity beacon (`$XDG_RUNTIME_DIR/hypruse/state.json`); the shipped [Waybar module](waybar/) is invisible when idle and shows a robot indicator while an agent has hands on your desktop.
 3. **Interruption:** click the indicator, or bind a panic key: `bind = SUPER SHIFT, BackSpace, exec, pkill -f hypruse`. Killing it mid-action is safe: button press/release pairs never span tool calls, so it cannot die holding a button.
 4. **The seat is shared.** There is one cursor and one keyboard focus, and Hyprland's focus-follows-mouse means a cursor move alone can retarget keystrokes. Don't type while an agent is driving; watch the indicator.
-5. **Scope:** stdio only (no network listener), no clipboard access, nothing persisted except the beacon. A screenshot sees everything visible: treat an agent session like screen sharing.
+5. **Scope:** stdio only (no network listener), nothing persisted except the beacon, and no clipboard access unless you opt in: `HYPRUSE_CLIPBOARD=1` registers a `clipboard` tool (never in read-only mode); clipboards hold passwords, so leave it off unless a workflow needs it. A screenshot sees everything visible: treat an agent session like screen sharing.
 
 ## Performance
 
@@ -160,7 +161,6 @@ The input e2e is deliberately manual: it borrows your cursor and keyboard, count
 - Headless-Hyprland end-to-end tests in CI
 - sway / niri support: the wire client already speaks the wlr protocols; what remains is an IPC layer alongside `hyprctl.py` (contributions welcome)
 - AT-SPI element tree: click by accessible name, read GTK/Qt UIs without vision
-- Clipboard integration, wait-for-stable capture, discrete-axis scroll
 - Multi-monitor and fractional-scaling hardening
 
 ## Related projects

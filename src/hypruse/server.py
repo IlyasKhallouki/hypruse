@@ -23,6 +23,7 @@ from mcp.server.fastmcp import FastMCP
 from mcp.types import ImageContent, TextContent
 
 from hypruse import __version__, events, hyprctl, safety, session
+from hypruse import clipboard as clip
 from hypruse import input as hinput
 from hypruse import screenshot as shot
 
@@ -52,12 +53,13 @@ near 1:1 (scale ~1.0) with the target large and their origin in `geometry`,
 so global = geometry[:2] + image_pixel lands cleanly. Estimate by
 proportion (e.g. "60% across a 300px-wide crop → x≈180"), not absolute
 guessing, and after a click that should change something, screenshot again
-to confirm before continuing.
+to confirm before continuing (stable=true waits out animations).
 
 The cursor and keyboard focus are SHARED with the human at the desk:
 finish what you start, and expect every action to be visible."""
 
 READONLY = os.environ.get("HYPRUSE_READONLY", "").lower() in ("1", "true", "yes", "on")
+CLIPBOARD = os.environ.get("HYPRUSE_CLIPBOARD", "").lower() in ("1", "true", "yes", "on")
 
 _READONLY_NOTE = """
 
@@ -91,18 +93,21 @@ def desktop() -> dict[str, Any]:
 
 
 def _deliver_capture(
-    window: str = "", region: str = "", scale: float = 0.0, extra: dict[str, Any] | None = None
+    window: str = "",
+    region: str = "",
+    scale: float = 0.0,
+    extra: dict[str, Any] | None = None,
+    stable: bool = False,
 ) -> list[Any]:
     """Capture and package for MCP transport: inline image + metadata in
     image mode, a saved file path + metadata otherwise."""
+    grab = shot.capture_stable if stable else shot.capture
     if os.environ.get("HYPRUSE_SCREENSHOT_MODE", "file") == "image":
         # Fit the transport budget (base64 adds ~33%; Claude Desktop caps
         # results at 1 MB) by degrading format before resolution.
         budget = int(os.environ.get("HYPRUSE_MAX_IMAGE_BYTES", "700000"))
         max_edge = int(os.environ.get("HYPRUSE_MAX_IMAGE_EDGE", "1568"))
-        data, meta = shot.capture(
-            window, region, scale=scale, max_bytes=budget, max_edge=max_edge
-        )
+        data, meta = grab(window, region, scale=scale, max_bytes=budget, max_edge=max_edge)
         meta.update(extra or {})
         image_block = ImageContent(
             type="image",
@@ -110,7 +115,7 @@ def _deliver_capture(
             mimeType=f"image/{meta['format']}",
         )
         return [image_block, TextContent(type="text", text=json.dumps(meta))]
-    data, meta = shot.capture(window, region, scale=scale)
+    data, meta = grab(window, region, scale=scale)
     meta.update(extra or {})
     d = _runtime_dir()
     path = d / f"shot-{int(time.time() * 1000)}.{meta['format']}"
@@ -125,30 +130,40 @@ def _deliver_capture(
 
 
 @mcp.tool()
-def screenshot(window: str = "", region: str = "", scale: float = 0) -> list[Any]:
+def screenshot(
+    window: str = "", region: str = "", scale: float = 0, stable: bool = False
+) -> list[Any]:
     """Capture the focused monitor, a window (`window`: "active" or an
     address from desktop, cheapest for reading one app), or a `region`
     "x,y,WxH". Returns the image (or a file path to read) + JSON metadata
     with geometry/scale for pixel→global mapping. `scale` 0.1-1.0:
-    optional deliberate downscale, usually leave unset. Before clicking a
-    small control, follow with `zoom` at the estimated point."""
+    optional deliberate downscale, usually leave unset. `stable=true`
+    waits (up to 2s) until two consecutive frames match, so a capture
+    right after an action is not taken mid-animation; metadata gains
+    `stable`. Before clicking a small control, follow with `zoom` at the
+    estimated point."""
     safety.touch("screenshot")
-    return _deliver_capture(window, region, scale=scale)
+    return _deliver_capture(window, region, scale=scale, stable=stable)
 
 
 @mcp.tool()
-def zoom(x: float, y: float, size: str = "", window: str = "") -> list[Any]:
+def zoom(
+    x: float, y: float, size: str = "", window: str = "", stable: bool = False
+) -> list[Any]:
     """Native-resolution re-capture around a point: the precision step of
     the coarse-to-fine loop. Screenshot first, estimate the target's global
     x,y, zoom there, re-estimate on the zoomed image (scale ~1.0, so
     global = geometry[:2] + image_pixel), then click. `size` "WxH" in
     logical pixels (default 480x360) is clamped to the screen; `window`
     (an address from desktop) clamps to that window instead. The metadata
-    echoes the requested point back as `point`."""
+    echoes the requested point back as `point`; `stable=true` waits for
+    the frame to settle first."""
     safety.touch("zoom")
     rx, ry, rw, rh = shot.zoom_region(x, y, size, window)
     return _deliver_capture(
-        region=f"{rx},{ry},{rw}x{rh}", extra={"target": "zoom", "point": [x, y]}
+        region=f"{rx},{ry},{rw}x{rh}",
+        extra={"target": "zoom", "point": [x, y]},
+        stable=stable,
     )
 
 
@@ -356,6 +371,28 @@ def binds() -> list[dict[str, Any]]:
     return hyprctl.binds()
 
 
+def clipboard(action: str, text: str = "") -> str:
+    """Clipboard access (opt-in surface: this tool exists only when the
+    user set HYPRUSE_CLIPBOARD=1 in the server env). action='read'
+    returns the clipboard's text content | 'write' (text) replaces it.
+    Text only. The clipboard belongs to the human at the desk: treat its
+    contents as sensitive, and read before overwriting."""
+    safety.touch(f"clipboard:{action}")
+    if action == "read":
+        content = clip.read()
+        if not content:
+            return "(clipboard is empty)"
+        if len(content) > 100_000:
+            return content[:100_000] + f"\n[truncated, {len(content)} chars total]"
+        return content
+    if action == "write":
+        if not text:
+            raise ValueError("write needs text")
+        clip.write(text)
+        return f"copied {len(text)} characters to the clipboard"
+    raise ValueError(f"unknown action {action!r}: read|write")
+
+
 def use_bind(combo: str) -> str:
     """Run one of the user's own Hyprland keybinds by its combo (from the
     `binds` tool), e.g. 'SUPER+F'. This executes the bound action directly
@@ -436,10 +473,12 @@ def wait_for(event: str, match: str = "", timeout_s: float = 10) -> dict[str, An
 
 # Acting tools register only outside read-only mode; observation tools
 # (desktop, screenshot, zoom, binds, wait_for) are decorated above and
-# always on.
+# always on. Clipboard is double-gated: opt-in env flag, never read-only.
 if not READONLY:
     for _acting_tool in (pointer, keyboard, hypr, launch, use_bind):
         mcp.tool()(_acting_tool)
+    if CLIPBOARD:
+        mcp.tool()(clipboard)
 
 
 def main() -> None:

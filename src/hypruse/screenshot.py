@@ -14,6 +14,7 @@ from __future__ import annotations
 import re
 import shutil
 import subprocess
+import time
 from typing import Any
 
 from hypruse import hyprctl
@@ -263,4 +264,31 @@ def capture(
     meta["format"] = fmt
     meta["scale"] = round(base_scale * applied, 6)
     meta["coords"] = "click a target at global = geometry[:2] + image_pixel / scale"
+    return data, meta
+
+
+def capture_stable(
+    window: str = "",
+    region: str = "",
+    scale: float = 0.0,
+    max_bytes: int | None = None,
+    max_edge: int | None = None,
+    interval: float = 0.15,
+    timeout: float = 2.0,
+) -> tuple[bytes, dict[str, Any]]:
+    """Capture until two consecutive frames are byte-identical, so a
+    screenshot taken right after an action does not land mid-animation.
+    Returns the settled frame with meta['stable'] = True, or the last
+    frame with False when the content never settles within `timeout`
+    (blinking cursors, video)."""
+    data, meta = capture(window, region, scale, max_bytes, max_edge)
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        time.sleep(interval)
+        nxt, nmeta = capture(window, region, scale, max_bytes, max_edge)
+        if nxt == data:
+            nmeta["stable"] = True
+            return nxt, nmeta
+        data, meta = nxt, nmeta
+    meta["stable"] = False
     return data, meta

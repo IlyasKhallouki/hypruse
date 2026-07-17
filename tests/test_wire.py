@@ -58,4 +58,77 @@ def test_parse_error_roundtrip():
 def test_linux_button_codes():
     assert wire.BUTTONS["left"] == 0x110
     assert wire.BUTTONS["right"] == 0x111
+
+
+def test_scroll_messages_whole_notches_are_discrete():
+    msgs = wire.scroll_messages(dy=3)
+    opcodes = [op for op, _ in msgs]
+    assert opcodes == [wire.PTR_AXIS_SOURCE, wire.PTR_AXIS_DISCRETE, wire.PTR_FRAME]
+    _, axis, value, discrete = struct.unpack("<IIii", msgs[1][1])
+    assert (axis, discrete) == (wire.AXIS_VERTICAL, 3)
+    assert value == wire.to_fixed(3 * wire.SCROLL_UNITS_PER_NOTCH)
+
+
+def test_scroll_messages_negative_notch():
+    msgs = wire.scroll_messages(dy=-1)
+    _, axis, value, discrete = struct.unpack("<IIii", msgs[1][1])
+    assert (axis, discrete) == (wire.AXIS_VERTICAL, -1)
+    assert value == wire.to_fixed(-wire.SCROLL_UNITS_PER_NOTCH)
+
+
+def test_scroll_messages_fractional_stays_continuous():
+    msgs = wire.scroll_messages(dy=0.5)
+    opcodes = [op for op, _ in msgs]
+    assert opcodes == [wire.PTR_AXIS_SOURCE, wire.PTR_AXIS, wire.PTR_FRAME]
+    _, axis, value = struct.unpack("<IIi", msgs[1][1])
+    assert axis == wire.AXIS_VERTICAL
+    assert value == wire.to_fixed(0.5 * wire.SCROLL_UNITS_PER_NOTCH)
+
+
+def test_scroll_messages_v1_compositor_stays_continuous():
+    """axis_discrete is since=2; sending it to a v1-bound pointer is a
+    protocol error that kills the connection."""
+    msgs = wire.scroll_messages(dy=3, discrete_ok=False)
+    opcodes = [op for op, _ in msgs]
+    assert wire.PTR_AXIS_DISCRETE not in opcodes
+    assert opcodes == [wire.PTR_AXIS_SOURCE, wire.PTR_AXIS, wire.PTR_FRAME]
+    _, axis, value = struct.unpack("<IIi", msgs[1][1])
+    assert (axis, value) == (wire.AXIS_VERTICAL, wire.to_fixed(3 * wire.SCROLL_UNITS_PER_NOTCH))
+
+
+def test_scroll_uses_bound_version(monkeypatch):
+    """The pointer inherits the manager's version: only bind >= 2 may
+    speak axis_discrete."""
+    sent = []
+
+    class FakePointer(wire.VirtualPointer):
+        def __init__(self, version):
+            self._version = version
+            self._pointer = 42
+
+        def _send(self, obj, opcode, body=b""):
+            sent.append(opcode)
+
+        def _roundtrip(self, collect_globals=False):
+            return []
+
+    FakePointer(2).scroll(dy=1)
+    assert wire.PTR_AXIS_DISCRETE in sent
+    sent.clear()
+    FakePointer(1).scroll(dy=1)
+    assert wire.PTR_AXIS_DISCRETE not in sent
+    assert wire.PTR_AXIS in sent
+
+
+def test_scroll_messages_both_axes_one_frame():
+    msgs = wire.scroll_messages(dy=1, dx=-2)
+    opcodes = [op for op, _ in msgs]
+    assert opcodes == [
+        wire.PTR_AXIS_SOURCE,
+        wire.PTR_AXIS_DISCRETE,
+        wire.PTR_AXIS_DISCRETE,
+        wire.PTR_FRAME,
+    ]
+    _, axis_h, _, discrete_h = struct.unpack("<IIii", msgs[2][1])
+    assert (axis_h, discrete_h) == (wire.AXIS_HORIZONTAL, -2)
     assert wire.BUTTONS["middle"] == 0x112
