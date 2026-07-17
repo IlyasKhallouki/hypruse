@@ -31,6 +31,46 @@ def test_snapshot_live():
 
 
 @needs_hyprland
+def test_monitor_geometry_is_logical_and_consistent():
+    """The coordinate contract, live: every monitor's reported geometry is
+    its logical rect, monitors do not overlap in logical space, and each
+    monitor's own logical center resolves back to itself. Exercised for
+    real against multiple scaled/rotated outputs under headless CI."""
+    raw = hyprctl.query("monitors")
+    snap = hyprctl.snapshot()
+    by_name = {m["name"]: m for m in snap["monitors"]}
+
+    for rm in raw:
+        assert by_name[rm["name"]]["geometry"] == list(hyprctl.logical_rect(rm))
+
+    rects = [tuple(m["geometry"]) for m in snap["monitors"]]
+    for i, (ax, ay, aw, ah) in enumerate(rects):
+        assert aw > 0 and ah > 0
+        for bx, by, bw, bh in rects[i + 1 :]:
+            apart = ax + aw <= bx or bx + bw <= ax or ay + ah <= by or by + bh <= ay
+            assert apart, "monitor logical rects overlap"
+
+    for rm in raw:
+        x, y, w, h = hyprctl.logical_rect(rm)
+        hit = hyprctl.monitor_at(raw, x + w // 2, y + h // 2)
+        assert hit is not None and hit["name"] == rm["name"]
+
+
+@needs_hyprland
+def test_screenshot_per_monitor_maps_back():
+    """Capturing each monitor yields logical-origin geometry and a scale
+    that folds in the monitor's fractional scale, so pixel/scale lands in
+    that monitor's logical rect."""
+    raw = hyprctl.query("monitors")
+    for rm in raw:
+        lx, ly, lw, lh = hyprctl.logical_rect(rm)
+        png, meta = screenshot.capture(region=f"{lx},{ly},{min(lw, 64)}x{min(lh, 64)}")
+        assert png[:8] == b"\x89PNG\r\n\x1a\n"
+        gx = meta["geometry"][0] + (meta["image"][0] / meta["scale"]) / 2
+        assert lx <= gx < lx + lw
+
+
+@needs_hyprland
 def test_screenshot_live_monitor_and_region():
     png, meta = screenshot.capture()
     assert png[:8] == b"\x89PNG\r\n\x1a\n"

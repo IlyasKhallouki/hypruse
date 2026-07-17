@@ -58,6 +58,30 @@ def cursor_pos() -> tuple[int, int]:
     return int(pos["x"]), int(pos["y"])
 
 
+def logical_rect(m: dict[str, Any]) -> tuple[int, int, int, int]:
+    """A monitor's rect in global logical coordinates (the one space
+    everything else in hypruse uses). hyprctl reports width/height as
+    physical mode pixels, so the logical footprint is size/scale, with
+    the axes swapped by 90/270-degree transforms (odd transform values).
+    This is the single source of truth for monitor geometry."""
+    scale = float(m.get("scale", 1.0)) or 1.0
+    w, h = m["width"] / scale, m["height"] / scale
+    if int(m.get("transform", 0)) % 2:
+        w, h = h, w
+    return int(m["x"]), int(m["y"]), round(w), round(h)
+
+
+def contains(rect: tuple[int, int, int, int], x: float, y: float) -> bool:
+    rx, ry, rw, rh = rect
+    return rx <= x < rx + rw and ry <= y < ry + rh
+
+
+def monitor_at(monitors: list[dict[str, Any]], x: float, y: float) -> dict[str, Any] | None:
+    """The monitor whose logical rect contains (x, y), or None if the
+    point is off every monitor."""
+    return next((m for m in monitors if contains(logical_rect(m), x, y)), None)
+
+
 def _window(c: dict[str, Any]) -> dict[str, Any]:
     """Trim a hyprctl client to what a model needs to reason and act."""
     win: dict[str, Any] = {
@@ -78,6 +102,23 @@ def _window(c: dict[str, Any]) -> dict[str, Any]:
     return win
 
 
+def _monitor(m: dict[str, Any]) -> dict[str, Any]:
+    """Trim a hyprctl monitor to a model view, geometry in the same global
+    logical space as window `at`/`size` (see logical_rect: hyprctl's raw
+    width/height are physical mode pixels)."""
+    x, y, w, h = logical_rect(m)
+    out: dict[str, Any] = {
+        "name": m["name"],
+        "geometry": [x, y, w, h],
+        "scale": m.get("scale", 1.0),
+        "focused": m.get("focused", False),
+        "active_workspace": m.get("activeWorkspace", {}).get("id"),
+    }
+    if int(m.get("transform", 0)):
+        out["transform"] = int(m["transform"])
+    return out
+
+
 def snapshot_from(
     monitors: list[dict[str, Any]],
     workspaces: list[dict[str, Any]],
@@ -88,16 +129,7 @@ def snapshot_from(
     """Pure assembly of the desktop state, separated from IPC for testability."""
     visible = {m.get("activeWorkspace", {}).get("id") for m in monitors}
     return {
-        "monitors": [
-            {
-                "name": m["name"],
-                "geometry": [m["x"], m["y"], m["width"], m["height"]],
-                "scale": m.get("scale", 1.0),
-                "focused": m.get("focused", False),
-                "active_workspace": m.get("activeWorkspace", {}).get("id"),
-            }
-            for m in monitors
-        ],
+        "monitors": [_monitor(m) for m in monitors],
         "workspaces": [
             {
                 "id": w["id"],

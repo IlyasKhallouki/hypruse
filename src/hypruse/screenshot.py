@@ -77,11 +77,10 @@ def zoom_region(x: float, y: float, size: str = "", window: str = "") -> tuple[i
         (bx, by), (bw, bh) = c["at"], c["size"]
     else:
         monitors = hyprctl.query("monitors")
-        m = next(
-            (m for m in monitors if _contains(_logical_rect(m), x, y)),
-            None,
-        ) or next((m for m in monitors if m.get("focused")), monitors[0])
-        bx, by, bw, bh = _logical_rect(m)
+        m = hyprctl.monitor_at(monitors, x, y) or next(
+            (m for m in monitors if m.get("focused")), monitors[0]
+        )
+        bx, by, bw, bh = hyprctl.logical_rect(m)
     return clamp_box(x, y, w, h, (bx, by, bw, bh))
 
 
@@ -171,27 +170,9 @@ def _cap_scale(physical_long_edge: float, max_edge: int | None) -> float:
     return max_edge / physical_long_edge
 
 
-def _logical_rect(m: dict[str, Any]) -> tuple[int, int, int, int]:
-    """A monitor's rect in global logical coordinates. hyprctl reports
-    width/height as physical mode pixels, so the logical footprint is
-    size/scale, with the axes swapped by 90/270-degree transforms."""
-    scale = float(m.get("scale", 1.0)) or 1.0
-    w, h = m["width"] / scale, m["height"] / scale
-    if int(m.get("transform", 0)) % 2:
-        w, h = h, w
-    return m["x"], m["y"], round(w), round(h)
-
-
-def _contains(rect: tuple[int, int, int, int], x: float, y: float) -> bool:
-    rx, ry, rw, rh = rect
-    return rx <= x < rx + rw and ry <= y < ry + rh
-
-
 def _scale_at(x: int, y: int, monitors: list[dict[str, Any]]) -> float:
-    for m in monitors:
-        if _contains(_logical_rect(m), x, y):
-            return float(m.get("scale", 1.0))
-    return 1.0
+    m = hyprctl.monitor_at(monitors, x, y)
+    return float(m.get("scale", 1.0)) if m else 1.0
 
 
 def _find_window(window: str, clients: list[dict[str, Any]], active: str | None) -> dict[str, Any]:
@@ -248,10 +229,12 @@ def capture(
     else:
         m = next((m for m in monitors if m.get("focused")), monitors[0])
         base = ["-o", m["name"]]
+        # geometry in logical coords like everything else; grim captures the
+        # physical output, so the physical long edge drives the byte-budget cap
         meta = {
             "target": "monitor",
             "monitor": m["name"],
-            "geometry": [m["x"], m["y"], m["width"], m["height"]],
+            "geometry": list(hyprctl.logical_rect(m)),
         }
         base_scale = float(m.get("scale", 1.0))
         physical_long = max(m["width"], m["height"])

@@ -6,6 +6,17 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Fixed
+- Multi-monitor and fractional-scaling hardening: `desktop` now reports
+  monitor `geometry` in global logical coordinates (the same space window
+  `at`/`size` and `pointer` use) instead of physical mode pixels, so on a
+  fractionally-scaled or rotated monitor the reported size matches the
+  layout. Rotated monitors surface a `transform` field, and their logical
+  footprint has the axes swapped. Monitor-containment logic (used by
+  `zoom` and screenshot scale lookup) shares one transform-aware
+  `logical_rect` source of truth in `hyprctl`, fixing wrong-monitor
+  selection and wrong `scale` stamps near fractional-scale seams.
+
 ## [0.4.0] - 2026-07-17
 
 ### Added
