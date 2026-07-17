@@ -6,6 +6,8 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-07-17
+
 ### Added
 - `sequence` tool: run an ordered list of actions
   (pointer/keyboard/hypr/wait_for) in one MCP call, so a click/type/enter
