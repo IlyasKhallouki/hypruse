@@ -113,6 +113,33 @@ class EventStream:
                 if name in names and (matcher is None or matcher(name, payload)):
                     return name, payload
 
+    def drain(self, settle: float = 0.08) -> list[tuple[str, dict[str, Any]]]:
+        """Collect the events that arrive within `settle` seconds, then
+        return them (in order). Unlike wait_for this does not block on a
+        specific event; it answers 'did anything happen just now?', which
+        is how a batched sequence detects the desktop changing under it."""
+        out: list[tuple[str, dict[str, Any]]] = []
+        deadline = time.monotonic() + settle
+        while True:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                return out
+            self._sock.settimeout(remaining)
+            try:
+                chunk = self._sock.recv(4096)
+            except TimeoutError:
+                return out
+            except OSError as exc:
+                raise EventError(f"event socket died: {exc}") from exc
+            if not chunk:
+                raise EventError("event socket closed by compositor")
+            self._buf += chunk
+            while b"\n" in self._buf:
+                line, self._buf = self._buf.split(b"\n", 1)
+                parsed = parse_event(line.decode(errors="replace"))
+                if parsed is not None:
+                    out.append(parsed)
+
     def close(self) -> None:
         self._sock.close()
 

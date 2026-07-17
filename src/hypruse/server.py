@@ -38,7 +38,11 @@ again. `binds` lists the owner's own keybinds; to run one, call
 `use_bind` with its combo (synthetic keypresses do NOT trigger compositor
 binds, so `keyboard` is only for shortcuts the focused app handles). After
 actions with delayed effects, block on `wait_for` (window_open,
-title_change) instead of sleeping.
+title_change) instead of sleeping. To run several actions at once (click,
+type, press enter, wait), pass them to `sequence` as one call: it stops if
+the desktop changes structurally between steps, so you spend one
+round-trip instead of one per step. It does not catch a bare focus change,
+so give a keyboard step a window= address when typing matters.
 
 Coordinates: one space everywhere, Hyprland global logical pixels (window
 `at`, cursor, clicks). Screenshots are pixel space: map back with
@@ -526,11 +530,164 @@ def wait_for(event: str, match: str = "", timeout_s: float = 10) -> dict[str, An
     return {"event": hit[0], **hit[1]}
 
 
+_SEQ_HANDLERS = {"pointer": pointer, "keyboard": keyboard, "hypr": hypr, "wait_for": wait_for}
+
+# Only STRUCTURAL changes invalidate a half-run plan. Focus changes
+# (activewindow/activewindowv2) and title updates are intentionally NOT
+# watched: a normal click focuses a window, so watching focus events would
+# abort the sequence on its own clicks. The consequence is that a bare
+# focus steal is NOT caught; a keyboard step's window= (which focuses
+# first) is the reliable guard against typing into the wrong window.
+_WATCHED_EVENTS = {"openwindow", "closewindow", "movewindow", "workspace"}
+
+_SEQ_MAX_STEPS = 20
+_SEQ_SETTLE = 0.2  # between-step window to let a structural change surface
+_SEQ_BUDGET = 30.0  # total wall-clock ceiling so a sequence cannot hold the seat
+
+
+def _event_signature(name: str, payload: dict[str, Any]) -> str:
+    """A watched event identified by type AND target, so the human doing
+    the same KIND of action to a DIFFERENT target (switching to another
+    workspace, moving another window) is not mistaken for the step's own
+    expected change."""
+    if name == "workspace":
+        return f"workspace:{payload.get('name', '')}"
+    if name in ("openwindow", "closewindow", "movewindow"):
+        return f"{name}:{payload.get('address', '')}"
+    return name
+
+
+def _step_expected_signatures(step: dict[str, Any]) -> set[str]:
+    """Watched-event signatures a hypr step is expected to cause, so they
+    do not count as the desktop changing under the sequence."""
+    if step.get("op") != "hypr":
+        return set()  # pointer/keyboard: any structural event is a real change
+    action = step.get("action", "")
+    if action == "workspace":
+        return {f"workspace:{step.get('workspace', '')}"}
+    if action == "move_window":
+        return {f"movewindow:{step.get('target', '')}"}
+    if action == "close_window":
+        return {f"closewindow:{step.get('target', '')}"}
+    return set()  # focus_window/fullscreen/floating cause only unwatched focus churn
+
+
+def _step_wait_names(step: dict[str, Any]) -> set[str]:
+    """Watched event NAMES an upcoming wait_for step will consume: a change
+    the sequence explicitly plans to wait for (click a launcher, then wait
+    for its window) is expected, not an abort. Matched by type because the
+    target address is not known ahead of time."""
+    if step.get("op") != "wait_for":
+        return set()
+    return set(_WAIT_EVENTS.get(step.get("event", ""), set())) & _WATCHED_EVENTS
+
+
+def _dispatch_step(step: dict[str, Any]) -> Any:
+    op = step.get("op")
+    handler = _SEQ_HANDLERS.get(op)
+    if handler is None:
+        raise ValueError(f"unknown step op {op!r}: {'|'.join(_SEQ_HANDLERS)}")
+    # `then` is handled once for the whole sequence, never per step
+    params = {k: v for k, v in step.items() if k not in ("op", "then")}
+    try:
+        return handler(**params)
+    except TypeError as exc:
+        raise ValueError(f"bad args for {op!r} step: {exc}") from exc
+
+
+def _unexpected(drained, expected_sigs, wait_names):
+    """Watched events that are neither caused by the prior step nor awaited
+    by the next one."""
+    return [
+        (n, p)
+        for n, p in drained
+        if n in _WATCHED_EVENTS
+        and _event_signature(n, p) not in expected_sigs
+        and n not in wait_names
+    ]
+
+
+def sequence(
+    steps: list[dict[str, Any]], stop_on_change: bool = True, then: str = "desktop"
+) -> list[Any] | str:
+    """Run an ordered list of actions in ONE call, so a click/type/enter
+    micro-sequence costs one round-trip instead of several. Each step is
+    {"op": "pointer"|"keyboard"|"hypr"|"wait_for", ...that tool's args},
+    e.g. [{"op":"pointer","action":"click","x":800,"y":60},
+    {"op":"keyboard","action":"type","text":"hello","window":"0x.."},
+    {"op":"keyboard","action":"key","keys":"enter"}]. With stop_on_change
+    (default) the run stops, best-effort, when it notices a STRUCTURAL
+    change between steps that the step did not intend: a window opening
+    (e.g. a dialog), closing, or moving, or a switch to an unexpected
+    workspace, so later steps do not act on stale state. It does NOT catch
+    a bare focus change, so to type into a specific window reliably give
+    that keyboard step a window= address (it focuses first). Bounded to 20
+    steps and ~30s total. `then` observes the final state ('desktop'
+    default, 'screenshot', 'none')."""
+    safety.touch("sequence")
+    if not steps:
+        raise ValueError("sequence needs at least one step")
+    if len(steps) > _SEQ_MAX_STEPS:
+        raise ValueError(f"sequence too long ({len(steps)} steps, max {_SEQ_MAX_STEPS})")
+
+    stream = None
+    if stop_on_change:
+        with contextlib.suppress(events.EventError):
+            stream = events.EventStream()
+
+    results: list[str] = []
+    stopped: str | None = None
+    prev_expected: set[str] = set()
+    deadline = time.monotonic() + _SEQ_BUDGET
+    try:
+        for i, step in enumerate(steps):
+            if stream is not None and i > 0:
+                drained = stream.drain(_SEQ_SETTLE)
+                changed = _unexpected(drained, prev_expected, _step_wait_names(step))
+                if changed:
+                    names = ", ".join(sorted({n for n, _ in changed}))
+                    stopped = f"desktop changed ({names}) before step {i}"
+                    break
+            budget_left = deadline - time.monotonic()
+            if budget_left <= 0:
+                stopped = f"time budget ({_SEQ_BUDGET:.0f}s) reached before step {i}"
+                break
+            run = dict(step)
+            if step.get("op") == "wait_for":  # never let one wait outlast the budget
+                run["timeout_s"] = min(float(step.get("timeout_s", 10)), max(budget_left, 1.0))
+            try:
+                res = _dispatch_step(run)
+            except Exception as exc:
+                results.append(f"[{i}] {step.get('op')}: ERROR {exc}")
+                stopped = f"step {i} raised: {exc}"
+                break
+            label = step.get("action") or step.get("event") or ""
+            results.append(f"[{i}] {step.get('op')} {label}: {res}".rstrip())
+            prev_expected = _step_expected_signatures(step)
+    finally:
+        if stream is not None:
+            # the last step can change the desktop too; a `then` observation
+            # would show it, but report it explicitly so nothing is masked
+            if stopped is None:
+                tail = _unexpected(stream.drain(_SEQ_SETTLE), prev_expected, set())
+                if tail:
+                    names = ", ".join(sorted({n for n, _ in tail}))
+                    stopped = f"desktop changed ({names}) after the last step"
+            stream.close()
+
+    ran = len(results)
+    if stopped is None:
+        head = f"sequence: all {ran}/{len(steps)} steps ran\n" + "\n".join(results)
+    else:
+        head = f"sequence: stopped after {ran}/{len(steps)} steps, {stopped}\n" + "\n".join(results)
+    return _acted(head, then)
+
+
 # Acting tools register only outside read-only mode; observation tools
 # (desktop, screenshot, zoom, binds, wait_for) are decorated above and
 # always on. Clipboard is double-gated: opt-in env flag, never read-only.
 if not READONLY:
-    for _acting_tool in (pointer, keyboard, hypr, launch, use_bind):
+    for _acting_tool in (pointer, keyboard, hypr, launch, use_bind, sequence):
         mcp.tool()(_acting_tool)
     if CLIPBOARD:
         mcp.tool()(clipboard)

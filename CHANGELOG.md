@@ -6,6 +6,21 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Added
+- `sequence` tool: run an ordered list of actions
+  (pointer/keyboard/hypr/wait_for) in one MCP call, so a click/type/enter
+  micro-sequence costs one model round-trip instead of several (LLM calls
+  dominate task latency). With `stop_on_change` (default), the run stops,
+  best-effort, when it notices a structural change between steps that the
+  step did not intend (a window opening, closing, or moving, or a switch
+  to a different workspace than the step asked for), so later steps do not
+  act on stale state; it returns what ran plus the changed desktop.
+  Matching is payload-aware, so the human doing the same kind of action to
+  a different target still stops the run. Bare focus changes are not
+  watched (a click focuses a window), so give a keyboard step a `window=`
+  address to type into a specific window reliably. Bounded to 20 steps and
+  ~30s total wall-clock. `then` observes the final state.
+
 ### Changed
 - `desktop` assembles its snapshot from a single `hyprctl --batch` call
   instead of five separate queries, cutting the per-command fork overhead
