@@ -7,6 +7,10 @@ All notable changes to this project are documented here. The format follows
 ## [Unreleased]
 
 ### Added
+- `keyboard` takes an optional `window` address that focuses the target
+  window before typing, so keystrokes land in the intended app rather than
+  whatever currently holds focus (focus-follows-mouse can retarget a shared
+  seat between calls). Composes with `then`.
 - Act-and-observe fusion: `pointer`, `keyboard`, `hypr`, and `use_bind`
   take an optional `then` argument that appends a fresh view of the result
   to the same tool call, so the agent sees an action's effect without a

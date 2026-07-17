@@ -58,7 +58,9 @@ guessing, and after a click that should change something, screenshot again
 to confirm before continuing (stable=true waits out animations).
 
 The cursor and keyboard focus are SHARED with the human at the desk:
-finish what you start, and expect every action to be visible."""
+finish what you start, and expect every action to be visible. Before
+typing, pass `keyboard(window=<address>)` to focus the intended app first,
+so keystrokes never land in the wrong window."""
 
 READONLY = os.environ.get("HYPRUSE_READONLY", "").lower() in ("1", "true", "yes", "on")
 CLIPBOARD = os.environ.get("HYPRUSE_CLIPBOARD", "").lower() in ("1", "true", "yes", "on")
@@ -239,25 +241,34 @@ def pointer(
     return _acted(f"{action} ok; cursor now at {hyprctl.cursor_pos()}", then)
 
 
-def keyboard(action: str, text: str = "", keys: str = "", then: str = "none") -> list[Any] | str:
-    """Keyboard to the FOCUSED APP (focus via hypr first). action='type'
-    (text, unicode-safe) | 'key' (keys combo: 'ctrl+shift+t', 'esc', 'F5';
-    aliases enter/esc/tab/backspace/pgup/pgdn/arrows, else XKB keysyms).
-    This drives shortcuts the focused application handles (ctrl+t, ctrl+l).
-    It does NOT trigger Hyprland's own keybinds (super+...): those go
-    through `use_bind`, and workspace/window actions through `hypr`. `then`
-    ('desktop'|'screenshot'|'none') appends the result to this call."""
+def keyboard(
+    action: str, text: str = "", keys: str = "", window: str = "", then: str = "none"
+) -> list[Any] | str:
+    """Keyboard to the focused app. action='type' (text, unicode-safe) |
+    'key' (keys combo: 'ctrl+shift+t', 'esc', 'F5'; aliases
+    enter/esc/tab/backspace/pgup/pgdn/arrows, else XKB keysyms). Pass
+    `window` (an address from desktop) to focus that window first, so
+    keystrokes land in the intended app rather than whatever currently
+    holds focus. This drives shortcuts the focused application handles
+    (ctrl+t, ctrl+l). It does NOT trigger Hyprland's own keybinds
+    (super+...): those go through `use_bind`, and workspace/window actions
+    through `hypr`. `then` ('desktop'|'screenshot'|'none') appends the
+    result to this call."""
     safety.touch(f"keyboard:{action}")
+    if window:
+        hyprctl.dispatch("focuswindow", _addr(window))
+        time.sleep(0.05)  # let keyboard focus settle before typing into it
+    into = f" into {window}" if window else ""
     if action == "type":
         if not text:
             raise ValueError("type needs text")
         hinput.type_text(text)
-        return _acted(f"typed {len(text)} characters", then)
+        return _acted(f"typed {len(text)} characters{into}", then)
     if action == "key":
         if not keys:
             raise ValueError("key needs keys")
         hinput.key_combo(keys)
-        return _acted(f"pressed {keys}", then)
+        return _acted(f"pressed {keys}{into}", then)
     raise ValueError(f"unknown action {action!r}: type|key")
 
 
