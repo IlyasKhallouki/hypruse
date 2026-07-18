@@ -19,6 +19,13 @@ All notable changes to this project are documented here. The format follows
   Electron/Chrome without `--force-renderer-accessibility`). Grounded in
   the GUI-agent literature (OSWorld, UFO, Agent-S); see the README
   Research section.
+- `ui` also reports a control's CURRENT VALUE, not just its label: `value`
+  for text typed into an entry and for a slider or spinner number,
+  `percent` for a slider's position within its range, `checked` for a box
+  or toggle. Reads are gated on role, so finding a button costs no extra
+  calls, and a password field's contents are never read. Many dropdowns
+  expose no value at all (GTK's newer combo boxes publish neither text nor
+  selection), so a screenshot is still the way to read a rendered value.
 
 ## [0.6.0] - 2026-07-17
 

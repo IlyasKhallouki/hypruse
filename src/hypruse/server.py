@@ -218,9 +218,14 @@ def ui(window: str = "", name: str = "", actionable: bool = True) -> list[Any] |
     keeps only interactive roles (buttons, entries, menu items, ...).
     Returns [{role, name, x, y, clickable}] where x,y is the click point:
     focus the window, then click it with `pointer` (the window must be
-    visible to receive the click). Not every app exposes a tree (terminals,
-    and Electron/Chrome without --force-renderer-accessibility, expose
-    little or nothing); when it does not, fall back to screenshot + zoom."""
+    visible to receive the click). Controls that carry a CURRENT VALUE also
+    report it: `value` (text typed into an entry, or a slider/spinner
+    number), `percent` for a slider's position, `checked` for a box or
+    toggle. Password fields never report contents, and many dropdowns
+    expose no value at all, so read the screen with screenshot when a
+    rendered value matters. Not every app exposes a tree (terminals, and
+    Electron/Chrome without --force-renderer-accessibility, expose little
+    or nothing); when it does not, fall back to screenshot + zoom."""
     safety.touch("ui")
     client = _resolve_window(window)
     title = client.get("title", "")
@@ -247,15 +252,17 @@ def ui(window: str = "", name: str = "", actionable: bool = True) -> list[Any] |
         # and clicking it would land on some other window
         if not (ax <= x < ax + aw and ay <= y < ay + ah):
             continue
-        out.append(
-            {
-                "role": e["role"],
-                "name": e["name"],
-                "x": x,
-                "y": y,
-                "clickable": e["clickable"],
-            }
-        )
+        item = {
+            "role": e["role"],
+            "name": e["name"],
+            "x": x,
+            "y": y,
+            "clickable": e["clickable"],
+        }
+        for key in ("value", "percent", "checked"):  # present only where it applies
+            if key in e:
+                item[key] = e[key]
+        out.append(item)
     if not out:
         what = f"matching {name!r}" if name else "actionable"
         tail = " (stopped after a large tree; try a name filter)" if truncated else ""

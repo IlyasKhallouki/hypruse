@@ -29,6 +29,8 @@ class A11yError(RuntimeError):
 _ACCESSIBLE = "org.a11y.atspi.Accessible"
 _COMPONENT = "org.a11y.atspi.Component"
 _ACTION = "org.a11y.atspi.Action"
+_TEXT = "org.a11y.atspi.Text"
+_VALUE = "org.a11y.atspi.Value"
 _REGISTRY_SVC = "org.a11y.atspi.Registry"
 _ROOT = "/org/a11y/atspi/accessible/root"
 _DBUS = ("org.freedesktop.DBus", "/org/freedesktop/DBus", "org.freedesktop.DBus")
@@ -40,6 +42,16 @@ _STATE_ENABLED, _STATE_SENSITIVE, _STATE_SHOWING, _STATE_VISIBLE = 8, 24, 25, 30
 
 # Window-relative coordinates beyond this are toolkit noise, not geometry
 _EXTENT_SANITY = 20000
+
+# Roles whose CURRENT VALUE is worth reading, and how to read it. Reading is
+# gated on role so the common case (find a button) costs no extra busctl
+# calls. PASSWORD_TEXT (40) is deliberately absent: never read its contents.
+_STATE_CHECKED, _STATE_PRESSED = 4, 20
+_CHECKABLE_ROLES = frozenset({7, 8, 44, 45, 62})  # check box/menu item, radio, toggle
+_TEXT_ROLES = frozenset({61, 79})  # text, entry
+_VALUE_ROLES = frozenset({51, 52})  # slider, spin button
+_MAX_TEXT = 200  # a text area can hold a whole document; report a readable head
+_VALUE_BEARING_ROLES = _CHECKABLE_ROLES | _TEXT_ROLES | _VALUE_ROLES
 
 # Roles worth clicking or typing into, as AtspiRole ENUM NUMBERS (from
 # GetRole). Numbers are matched, not GetRoleName strings, because the role
@@ -233,6 +245,54 @@ def _states(bus: Bus, svc: str, path: str) -> set[int]:
     return out
 
 
+def _interfaces(bus: Bus, svc: str, path: str) -> set[str]:
+    """Short interface names the object supports, so Text/Value are only
+    called where they exist (calling them blind raises UnknownMethod)."""
+    try:
+        return {i.rsplit(".", 1)[-1] for i in bus.call(svc, path, _ACCESSIBLE, "GetInterfaces")[0]}
+    except (A11yError, IndexError, TypeError):
+        return set()
+
+
+def element_value(bus: Bus, svc: str, path: str, role: int, states: set[int]) -> dict[str, Any]:
+    """The element's CURRENT VALUE, as opposed to its label: what is typed
+    into it, where a slider sits, whether a box is ticked. Returns the keys
+    that apply ({} for a plain button), because the accessible name alone
+    says a control called "Volume" exists without saying it is at 66%.
+
+    Gated on role: checkable state is free (already in `states`), Text and
+    Value cost one call each and only for roles that can carry them. A
+    password field's contents are never read."""
+    if role in _CHECKABLE_ROLES:
+        return {"checked": _STATE_CHECKED in states or _STATE_PRESSED in states}
+    if role in _TEXT_ROLES:
+        if "Text" not in _interfaces(bus, svc, path):
+            return {}
+        try:
+            count = int(bus.prop(svc, path, _TEXT, "CharacterCount"))
+            if count <= 0:
+                return {"value": ""}
+            end = min(count, _MAX_TEXT)
+            text = str(bus.call(svc, path, _TEXT, "GetText", "ii", "0", str(end))[0])
+            return {"value": text + ("..." if count > end else "")}
+        except (A11yError, IndexError, ValueError, TypeError):
+            return {}
+    if role in _VALUE_ROLES:
+        if "Value" not in _interfaces(bus, svc, path):
+            return {}
+        try:
+            current = float(bus.prop(svc, path, _VALUE, "CurrentValue"))
+            low = float(bus.prop(svc, path, _VALUE, "MinimumValue"))
+            high = float(bus.prop(svc, path, _VALUE, "MaximumValue"))
+        except (A11yError, ValueError, TypeError):
+            return {}
+        out: dict[str, Any] = {"value": current}
+        if high > low:  # raw units are toolkit-specific; a percent is readable
+            out["percent"] = round((current - low) / (high - low) * 100)
+        return out
+    return {}
+
+
 def _clickable_now(states: set[int]) -> bool:
     """Showing, visible, and responsive to input. SENSITIVE and ENABLED
     overlap but toolkits do not set them together (GTK notebook tabs report
@@ -271,10 +331,13 @@ def find_elements(
         stack.extend(reversed(kids))  # keep document order under a LIFO stack
         if needle and needle not in nm.lower():
             continue
-        if actionable and _role_num(bus, svc, path) not in ACTIONABLE_ROLE_NUMS:
+        role_num = _role_num(bus, svc, path)  # also gates the value read below
+        if actionable and role_num not in ACTIONABLE_ROLE_NUMS:
             continue
-        if not nm and not needle:
-            continue  # unnamed elements are not targetable in a dump
+        if not nm and not needle and role_num not in _VALUE_BEARING_ROLES:
+            # unnamed and valueless: nothing to target or report. An unnamed
+            # slider or checkbox still carries a reading worth returning.
+            continue
         ext = _window_extents(bus, svc, path)
         if ext is None:
             continue
@@ -285,6 +348,7 @@ def find_elements(
                 "name": nm,
                 "extent": ext,
                 "clickable": _clickable_now(states),
+                **element_value(bus, svc, path, role_num, states),
                 "svc": svc,
                 "path": path,
             }

@@ -91,6 +91,11 @@ class FakeBus:
 
     def call(self, svc, path, iface, method, *sig):
         node = self.nodes[(svc, path)]
+        if method == "GetInterfaces":
+            return [node.get("ifaces", [])]
+        if method == "GetText":
+            start, end = int(sig[1]), int(sig[2])  # sig = (signature, start, end)
+            return [node.get("text", "")[start:end]]
         if method == "GetChildren":
             return [[list(c) for c in node["children"]]]
         if method == "GetRole":
@@ -109,7 +114,12 @@ class FakeBus:
         raise AssertionError(method)
 
     def prop(self, svc, path, iface, name):
-        return self.nodes[(svc, path)].get("name", "")
+        node = self.nodes[(svc, path)]
+        if name == "CharacterCount":
+            return len(node.get("text", ""))
+        if name in ("CurrentValue", "MinimumValue", "MaximumValue"):
+            return node[{"CurrentValue": "cur", "MinimumValue": "min", "MaximumValue": "max"}[name]]
+        return node.get("name", "")
 
     def conn_pid(self, svc):
         return self.pids.get(svc)
@@ -278,6 +288,69 @@ def test_clickable_accepts_sensitive_without_enabled():
     assert a11y._clickable_now({8, 25, 30}) is True  # enabled, no sensitive
     assert a11y._clickable_now({24, 30}) is False  # not showing
     assert a11y._clickable_now({25, 30}) is False  # neither sensitive nor enabled
+
+
+# --- current values (what a control is set to, not just its label) ---
+
+
+def test_value_of_checkable_comes_free_from_states():
+    bus = FakeBus({("a", "/c"): {"role": 7, "name": "Agree", "children": []}})
+    assert a11y.element_value(bus, "a", "/c", 7, {4}) == {"checked": True}  # CHECKED
+    assert a11y.element_value(bus, "a", "/c", 7, {20}) == {"checked": True}  # PRESSED
+    assert a11y.element_value(bus, "a", "/c", 7, set()) == {"checked": False}
+
+
+def test_value_reads_entry_text():
+    nodes = {("a", "/e"): {"role": 79, "name": "", "text": "hello",
+                           "ifaces": ["org.a11y.atspi.Text"], "children": []}}
+    assert a11y.element_value(FakeBus(nodes), "a", "/e", 79, set()) == {"value": "hello"}
+
+
+def test_value_truncates_a_long_text_area():
+    nodes = {("a", "/e"): {"role": 61, "name": "", "text": "x" * 500,
+                           "ifaces": ["org.a11y.atspi.Text"], "children": []}}
+    got = a11y.element_value(FakeBus(nodes), "a", "/e", 61, set())["value"]
+    assert got.endswith("...") and len(got) == a11y._MAX_TEXT + 3
+
+
+def test_password_contents_are_never_read():
+    # a password field is a legitimate element to report, but its contents
+    # must never leave the app
+    nodes = {("a", "/p"): {"role": 40, "name": "Password", "text": "hunter2",
+                           "ifaces": ["org.a11y.atspi.Text"], "children": []}}
+    assert a11y.element_value(FakeBus(nodes), "a", "/p", 40, set()) == {}
+
+
+def test_value_reads_slider_position_as_percent():
+    # raw units are toolkit-specific (PulseAudio uses 0..99957), so a
+    # position percentage is what an agent can actually reason about
+    nodes = {("a", "/s"): {"role": 51, "name": "", "cur": 65536.0, "min": 0.0, "max": 99957.0,
+                           "ifaces": ["org.a11y.atspi.Value"], "children": []}}
+    assert a11y.element_value(FakeBus(nodes), "a", "/s", 51, set()) == {
+        "value": 65536.0,
+        "percent": 66,
+    }
+
+
+def test_value_skips_roles_and_missing_interfaces():
+    bus, _ = _tree()
+    assert a11y.element_value(bus, "app", "/save", 43, ALL_STATES) == {}  # plain button
+    nodes = {("a", "/e"): {"role": 79, "name": "", "ifaces": [], "children": []}}
+    assert a11y.element_value(FakeBus(nodes), "a", "/e", 79, set()) == {}  # no Text iface
+
+
+def test_unnamed_value_bearing_element_is_still_reported():
+    # pavucontrol's volume slider has no accessible name; its reading is
+    # still worth returning
+    nodes = {
+        ("a", "/root"): {"role": 75, "name": "app", "children": [("a", "/s"), ("a", "/box")]},
+        ("a", "/s"): {"role": 51, "name": "", "cur": 5.0, "min": 0.0, "max": 10.0,
+                      "extent": (1, 2, 3, 4), "states": ALL_STATES,
+                      "ifaces": ["org.a11y.atspi.Value"], "children": []},
+        ("a", "/box"): {"role": 39, "name": "", "extent": (0, 0, 9, 9), "children": []},
+    }
+    els, _ = a11y.find_elements(FakeBus(nodes), "a", "/root", actionable=False)
+    assert [(e["role"], e.get("percent")) for e in els] == [("widget", 50)]  # panel skipped
 
 
 def test_state_decoding_two_words():
