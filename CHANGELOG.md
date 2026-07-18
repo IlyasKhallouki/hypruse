@@ -6,6 +6,8 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-07-18
+
 ### Added
 - `ui` tool: read a window's AT-SPI accessibility tree and return its
   clickable elements by accessible name with exact global coordinates and
