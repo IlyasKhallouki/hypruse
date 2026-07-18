@@ -38,6 +38,9 @@ COORD_WINDOW = 1  # ATSPI_COORD_TYPE_WINDOW: extents relative to the toplevel
 # AtspiStateType bit positions (GetState returns a 2-word uint32 bitfield)
 _STATE_ENABLED, _STATE_SENSITIVE, _STATE_SHOWING, _STATE_VISIBLE = 8, 24, 25, 30
 
+# Window-relative coordinates beyond this are toolkit noise, not geometry
+_EXTENT_SANITY = 20000
+
 # Roles worth clicking or typing into, as AtspiRole ENUM NUMBERS (from
 # GetRole). Numbers are matched, not GetRoleName strings, because the role
 # name varies by toolkit (GTK reports a push button (enum 43) as "button",
@@ -200,11 +203,21 @@ def _children(bus: Bus, svc: str, path: str) -> list[tuple[str, str]]:
 
 
 def _window_extents(bus: Bus, svc: str, path: str) -> tuple[int, int, int, int] | None:
+    """Window-relative extents, or None when the widget has no usable
+    geometry. Toolkits report degenerate or wild extents for things that are
+    not rendered (GTK notebook scroll arrows come back 8x0; widgets on an
+    unrendered tab page report absurd origins), and those must not be
+    offered as click targets."""
     try:
         x, y, w, h = bus.call(svc, path, _COMPONENT, "GetExtents", "u", str(COORD_WINDOW))[0]
-        return int(x), int(y), int(w), int(h)
+        x, y, w, h = int(x), int(y), int(w), int(h)
     except (A11yError, IndexError, ValueError):
         return None
+    if w <= 0 or h <= 0:
+        return None
+    if not (-_EXTENT_SANITY <= x <= _EXTENT_SANITY and -_EXTENT_SANITY <= y <= _EXTENT_SANITY):
+        return None
+    return x, y, w, h
 
 
 def _states(bus: Bus, svc: str, path: str) -> set[int]:
@@ -221,7 +234,13 @@ def _states(bus: Bus, svc: str, path: str) -> set[int]:
 
 
 def _clickable_now(states: set[int]) -> bool:
-    return {_STATE_SHOWING, _STATE_VISIBLE, _STATE_SENSITIVE, _STATE_ENABLED} <= states
+    """Showing, visible, and responsive to input. SENSITIVE and ENABLED
+    overlap but toolkits do not set them together (GTK notebook tabs report
+    SENSITIVE without ENABLED yet click fine), so either satisfies the
+    responsive half rather than requiring both."""
+    if not {_STATE_SHOWING, _STATE_VISIBLE} <= states:
+        return False
+    return _STATE_SENSITIVE in states or _STATE_ENABLED in states
 
 
 def find_elements(

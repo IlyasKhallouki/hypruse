@@ -74,6 +74,27 @@ def test_ui_no_matching_elements_is_friendly(wired):
     assert "no actionable" in srv.ui(window="0xw")
 
 
+def test_ui_drops_elements_outside_the_window(wired):
+    # the window rect is authoritative: a widget the toolkit never laid out
+    # can report a point over some OTHER window, which must not be offered
+    wired.setattr(srv.a11y, "app_for_pid", lambda *a: ("a", "/root"))
+    wired.setattr(
+        srv.a11y,
+        "find_elements",
+        lambda *a, **k: (
+            [
+                {"role": "button", "name": "Inside", "extent": (10, 20, 80, 40),
+                 "clickable": True},
+                {"role": "button", "name": "Elsewhere", "extent": (9000, 20, 80, 40),
+                 "clickable": True},
+            ],
+            False,
+        ),
+    )
+    out = srv.ui(window="0xw")  # window is at (100,200) size 400x200
+    assert [e["name"] for e in out] == ["Inside"]
+
+
 def test_ui_truncation_is_surfaced(wired):
     wired.setattr(srv.a11y, "app_for_pid", lambda *a: ("a", "/root"))
     wired.setattr(srv.a11y, "find_elements", lambda *a, **k: ([], True))  # truncated

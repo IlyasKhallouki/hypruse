@@ -31,10 +31,12 @@ INSTRUCTIONS = """\
 hypruse controls a live Hyprland desktop. Workflow: call `desktop` first
 and prefer `hypr`/`launch` (IPC, instant and exact) for anything window-
 or workspace-shaped; use `screenshot` + `pointer`/`keyboard` only to see
-and operate inside application windows. For apps that expose an
-accessibility tree (many GTK/Qt apps), `ui` returns clickable elements by
-NAME with exact coordinates and no screenshot, cheaper and more precise
-than vision; fall back to screenshot + zoom when it returns nothing. To
+and operate inside application windows. To CLICK a named control inside an
+app, try `ui` FIRST: for GTK/Qt apps it returns the control's exact
+coordinates from the accessibility tree with no image at all, which is
+both cheaper and more precise than estimating a pixel. Use screenshot +
+zoom when `ui` returns nothing, when you need to READ the screen (`ui`
+gives labels, not rendered values), or for canvas-like UIs. To
 verify an effect without a second round-trip, pass `then='desktop'` (a
 fresh snapshot) or `then='screenshot'` to the acting call itself instead
 of calling `desktop` again. `binds` lists the owner's own keybinds; to run one, call
@@ -235,16 +237,25 @@ def ui(window: str = "", name: str = "", actionable: bool = True) -> list[Any] |
     except a11y.A11yError as exc:
         return f"accessibility read failed: {exc}; use screenshot + zoom instead"
     ax, ay = client["at"]
-    out = [
-        {
-            "role": e["role"],
-            "name": e["name"],
-            "x": ax + e["extent"][0] + e["extent"][2] // 2,
-            "y": ay + e["extent"][1] + e["extent"][3] // 2,
-            "clickable": e["clickable"],
-        }
-        for e in elements
-    ]
+    aw, ah = client["size"]
+    out = []
+    for e in elements:
+        ex, ey, ew, eh = e["extent"]
+        x, y = ax + ex + ew // 2, ay + ey + eh // 2
+        # the window rect is authoritative: a point outside it belongs to a
+        # widget the toolkit did not really lay out (an unrendered tab page),
+        # and clicking it would land on some other window
+        if not (ax <= x < ax + aw and ay <= y < ay + ah):
+            continue
+        out.append(
+            {
+                "role": e["role"],
+                "name": e["name"],
+                "x": x,
+                "y": y,
+                "clickable": e["clickable"],
+            }
+        )
     if not out:
         what = f"matching {name!r}" if name else "actionable"
         tail = " (stopped after a large tree; try a name filter)" if truncated else ""

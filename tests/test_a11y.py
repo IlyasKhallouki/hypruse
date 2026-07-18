@@ -254,6 +254,32 @@ def test_do_action():
     assert bus.nodes[("app", "/save")]["done"] is True
 
 
+def test_degenerate_and_wild_extents_are_rejected():
+    # toolkits report unrendered widgets with zero-size or absurd origins
+    # (GTK notebook scroll arrows come back 8x0; offscreen tab pages report
+    # origins in the millions). Neither is a real click target.
+    nodes = {
+        ("a", "/ghost"): {"role": 43, "name": "Next tab", "extent": (-1, 3, 8, 0),
+                          "children": []},
+        ("a", "/wild"): {"role": 43, "name": "Offscreen", "extent": (139367382, 5, 10, 10),
+                         "children": []},
+        ("a", "/ok"): {"role": 43, "name": "Real", "extent": (1, 2, 3, 4), "children": []},
+    }
+    bus = FakeBus(nodes)
+    assert a11y._window_extents(bus, "a", "/ghost") is None
+    assert a11y._window_extents(bus, "a", "/wild") is None
+    assert a11y._window_extents(bus, "a", "/ok") == (1, 2, 3, 4)
+
+
+def test_clickable_accepts_sensitive_without_enabled():
+    # GTK notebook tabs report SENSITIVE+SHOWING+VISIBLE but NOT ENABLED and
+    # click fine, so requiring both would falsely mark them unclickable
+    assert a11y._clickable_now({24, 25, 30}) is True  # sensitive, no enabled
+    assert a11y._clickable_now({8, 25, 30}) is True  # enabled, no sensitive
+    assert a11y._clickable_now({24, 30}) is False  # not showing
+    assert a11y._clickable_now({25, 30}) is False  # neither sensitive nor enabled
+
+
 def test_state_decoding_two_words():
     # bit 30 (visible) in low word, bit 32 in high word
     bus = FakeBus({("a", "/n"): {"role": 43, "name": "b", "extent": (0, 0, 1, 1),
