@@ -179,20 +179,28 @@ def guard_pointer(x: float | None, y: float | None, allow_auth: bool = False) ->
     omitted the action lands at the CURRENT cursor, so the current position
     is resolved and checked (a click-in-place must not skip the guards).
 
-    Confinement fails closed: Hyprland's client list is not z-ordered, so if
-    any window covering the point is out of scope hypruse cannot prove the
-    top one is safe and refuses. Auth refuses a click over a known
-    authentication dialog unless allow_auth."""
+    Fails closed: if the point (or the windows under it) cannot be resolved
+    while a guard is active, the action is refused, never allowed through
+    unchecked. Confinement in particular cannot prove the top window is safe
+    from a non-z-ordered client list, so any covering out-of-scope window
+    refuses. Auth refuses a click over a known authentication dialog unless
+    allow_auth."""
     scope = _confine_scope()
     auth = _auth_guard_on() and not allow_auth
     if scope is None and not auth:
         return  # nothing active: no query
     px, py = x, y
     if px is None or py is None:
+        # a coordinate-less click/scroll lands at the current cursor; if we
+        # cannot read where that is, refuse rather than fire unchecked (the
+        # virtual-pointer wire delivers the event even when hyprctl is down)
         try:
             px, py = hyprctl.cursor_pos()
-        except Exception:
-            return
+        except Exception as exc:
+            raise TrustError(
+                "cannot resolve the cursor position to guard a coordinate-less "
+                f"pointer action ({exc}); pass explicit x,y or retry"
+            ) from exc
     under = _windows_under(px, py)
     if scope is not None:
         outside = [c for c in under if not _client_in_scope(c, scope)]

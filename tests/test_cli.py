@@ -132,6 +132,17 @@ def test_stop_handles_non_dict_beacon(tmp_path, monkeypatch, capsys):
     assert "unreadable" in capsys.readouterr().out
 
 
+def test_stop_handles_dict_beacon_missing_pid(tmp_path, monkeypatch, capsys):
+    # a dict beacon without a pid key hits the KeyError branch the fix added
+    # (int({...}["pid"]) raises KeyError, must be caught)
+    monkeypatch.setenv("XDG_RUNTIME_DIR", str(tmp_path))
+    d = tmp_path / "hypruse"
+    d.mkdir()
+    (d / "state.json").write_text('{"started": 1}')
+    assert cli.stop() == 1
+    assert "unreadable" in capsys.readouterr().out
+
+
 def test_stop_clears_stale_beacon(tmp_path, monkeypatch, capsys):
     monkeypatch.setenv("XDG_RUNTIME_DIR", str(tmp_path))
     d = tmp_path / "hypruse"

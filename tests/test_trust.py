@@ -117,6 +117,21 @@ def test_guard_pointer_coordinate_less_uses_cursor(monkeypatch):
         trust.guard_pointer(None, None)
 
 
+def test_guard_pointer_coordinate_less_fails_closed_on_cursor_error(monkeypatch):
+    # the coordinate-less path resolves the cursor; if that read fails while
+    # a guard is active, refuse (the wire delivers the click even when
+    # hyprctl is down), never fire unchecked
+    monkeypatch.setenv("HYPRUSE_CONFINE", "class:kitty")
+    monkeypatch.setenv("HYPRUSE_AUTH_GUARD", "0")
+
+    def boom():
+        raise trust.hyprctl.HyprctlError("cursorpos timed out")
+
+    monkeypatch.setattr(trust.hyprctl, "cursor_pos", boom)
+    with pytest.raises(trust.TrustError, match="cannot resolve the cursor"):
+        trust.guard_pointer(None, None)
+
+
 def test_guard_pointer_auth_over_polkit(monkeypatch):
     # default auth guard: a click over a polkit dialog is refused even with
     # no confinement configured
