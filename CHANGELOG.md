@@ -6,6 +6,8 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.7.1] - 2026-07-19
+
 ### Fixed
 - The pixel-to-global coordinate contract on scaled monitors, two root
   causes found by an adversarial audit. grim's `-s` flag is an ABSOLUTE
