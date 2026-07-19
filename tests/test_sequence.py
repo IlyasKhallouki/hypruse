@@ -13,9 +13,10 @@ class FakeStream:
     batches, one per drain() call, then empty batches forever. `waits`
     scripts events for wait_for() calls on the same stream."""
 
-    def __init__(self, batches, waits=None):
+    def __init__(self, batches, waits=None, wait_error=False):
         self.batches = list(batches)
         self.waits = list(waits or [])
+        self.wait_error = wait_error
         self.closed = False
         self.drains = 0
         self.wait_calls = []
@@ -26,6 +27,10 @@ class FakeStream:
 
     def wait_for(self, names, matcher, timeout):
         self.wait_calls.append((set(names), timeout))
+        if self.wait_error:
+            from hypruse import events
+
+            raise events.EventError("socket died mid-wait")
         while self.waits:
             n, p = self.waits.pop(0)
             if n in names and (matcher is None or matcher(n, p)):
@@ -58,8 +63,8 @@ def _head(out):
     return out[0].text if isinstance(out, list) else out
 
 
-def _stream(monkeypatch, batches, waits=None):
-    stream = FakeStream(batches, waits)
+def _stream(monkeypatch, batches, waits=None, wait_error=False):
+    stream = FakeStream(batches, waits, wait_error)
     monkeypatch.setattr(srv.events, "EventStream", lambda: stream)
     return stream
 
@@ -180,6 +185,56 @@ def test_wait_step_blocks_on_the_sequence_stream(wired, monkeypatch):
     out = srv.sequence(steps, then="none")
     assert "all 2/2" in _head(out) and "0xk" in _head(out)
     assert len(stream.wait_calls) == 1 and stream.wait_calls[0][0] == {"openwindow"}
+
+
+def test_wait_step_never_served_a_stale_event(wired, monkeypatch):
+    # [switch to 2, switch to 3, wait for the next switch]: the wait must
+    # NOT be handed the excused workspace:2 from two steps ago; with the
+    # backlog empty of own-changes it blocks for a genuinely new event
+    monkeypatch.setattr(srv.hyprctl, "query", lambda cmd: {"name": ""})
+    stream = _stream(
+        monkeypatch,
+        [[("workspace", {"name": "2"})], [("workspace", {"name": "3"})]],
+        waits=[("workspace", {"name": "4"})],
+    )
+    steps = [
+        {"op": "hypr", "action": "workspace", "workspace": "2"},
+        {"op": "hypr", "action": "workspace", "workspace": "3"},
+        {"op": "wait_for", "event": "workspace"},
+    ]
+    out = srv.sequence(steps, then="none")
+    assert "all 3/3" in _head(out)
+    assert "'name': '4'" in _head(out)  # the NEXT switch, not the stale "2"
+    assert len(stream.wait_calls) == 1  # it really blocked
+
+
+def test_wait_step_survives_socket_death_mid_wait(wired, monkeypatch):
+    # the event socket dying DURING an in-sequence wait degrades to a note,
+    # not a crash, and the sequence still reports its steps
+    _stream(monkeypatch, [[]], wait_error=True)
+    steps = [
+        {"op": "pointer", "action": "click", "x": 1, "y": 2},
+        {"op": "wait_for", "event": "window_open"},
+    ]
+    out = srv.sequence(steps, then="none")
+    assert "all 2/2" in _head(out)
+    assert "event socket unavailable" in _head(out)
+
+
+def test_wait_step_without_stream_uses_standalone_dispatch(wired, monkeypatch):
+    # with stop_on_change=False there is no sequence stream: a wait step
+    # must fall through to the standalone tool (with the budget clamp)
+    def boom():
+        raise AssertionError("must not open a stream when stop_on_change is False")
+
+    monkeypatch.setattr(srv.events, "EventStream", boom)
+    srv.sequence(
+        [{"op": "wait_for", "event": "window_open", "timeout_s": 60}],
+        stop_on_change=False,
+        then="none",
+    )
+    assert [s["op"] for s in wired] == ["wait_for"]
+    assert wired[0]["timeout_s"] <= 30  # clamped to the sequence budget
 
 
 def test_wait_step_match_filters_backlog(wired, monkeypatch):

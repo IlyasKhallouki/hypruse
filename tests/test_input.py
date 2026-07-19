@@ -54,14 +54,19 @@ class FakeVP:
 
 def test_drag_tracks_and_clears_held_button(monkeypatch):
     vp = FakeVP()
+    seen = []
     monkeypatch.setattr(hinput, "_vp", vp)
-    monkeypatch.setattr(hinput, "move", lambda x, y: None)
+    # every path move observes the flag: this is what a SIGTERM landing
+    # mid-drag would see, so it must read "left" for the entire hold
+    monkeypatch.setattr(hinput, "move", lambda x, y: seen.append(hinput._held_button))
     monkeypatch.setattr(hinput.time, "sleep", lambda s: None)
     hinput.drag(0, 0, 10, 10)
     from hypruse.wire import PRESSED, RELEASED
 
     assert vp.events == [("left", PRESSED), ("left", RELEASED)]
     assert hinput._held_button is None
+    assert len(seen) == 13  # the initial placement move + 12 path moves
+    assert seen[1:] == ["left"] * 12  # tracked through the whole hold
 
 
 def test_concurrent_drags_never_interleave(monkeypatch):

@@ -207,8 +207,12 @@ def drag(x1: float, y1: float, x2: float, y2: float, button: str = "left") -> No
 
     def run(p: VirtualPointer) -> None:
         global _held_button
-        p.button(button, PRESSED)
+        # flag BEFORE the press: the press blocks in a sync roundtrip with
+        # the button already down compositor-side, and a SIGTERM landing
+        # there must see the hold. Releasing an un-pressed button is
+        # harmless; dying with one pressed is not.
         _held_button = button
+        p.button(button, PRESSED)
         try:
             steps = 12
             for i in range(1, steps + 1):

@@ -46,6 +46,26 @@ def test_touch_sanitizes_agent_controlled_action(tmp_path, monkeypatch):
     safety.shutdown()
 
 
+def test_server_main_registers_drag_release_cleanup(tmp_path, monkeypatch):
+    # the glue that arms the kill-switch-mid-drag cleanup: main() must
+    # register input.release_held, or shutdown() releases nothing
+    from hypruse import server as srv
+
+    monkeypatch.setenv("XDG_RUNTIME_DIR", str(tmp_path))
+    monkeypatch.setattr(srv.session, "ensure_session_env", lambda: None)
+    monkeypatch.setattr(srv.mcp, "run", lambda: None)
+    monkeypatch.setattr(srv.sys, "argv", ["hypruse"])
+
+    class Pipe:
+        def isatty(self):
+            return False
+
+    monkeypatch.setattr(srv.sys, "stdin", Pipe())
+    srv.main()
+    assert srv.hinput.release_held in safety._cleanups
+    safety.shutdown()
+
+
 def test_shutdown_runs_registered_cleanups(tmp_path, monkeypatch):
     # the SIGTERM kill switch runs shutdown(); a drag's held button must be
     # released by a registered cleanup before the process dies

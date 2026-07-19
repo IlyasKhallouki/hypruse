@@ -770,7 +770,14 @@ def sequence(
         for i, step in enumerate(steps):
             if stream is not None and i > 0:
                 drained = stream.drain(_SEQ_SETTLE)
-                backlog.extend(drained)
+                # wait-consumable events are only THIS window's, minus what
+                # the sequence itself caused: REPLACING (not extending)
+                # keeps a later wait from being served a stale event from
+                # two steps ago, and an own-change the abort check excused
+                # (prev_expected) must not double as a wait hit
+                backlog[:] = [
+                    (n, p) for n, p in drained if _event_signature(n, p) not in prev_expected
+                ]
                 changed = _unexpected(drained, prev_expected, _step_wait_names(step))
                 if changed:
                     names = ", ".join(sorted({n for n, _ in changed}))
