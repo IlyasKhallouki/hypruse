@@ -13,6 +13,7 @@ with no uinput scancode guessing.
 
 from __future__ import annotations
 
+import contextlib
 import shutil
 import subprocess
 import time
@@ -126,6 +127,21 @@ def key_combo(combo: str) -> None:
 # --- pointer ----------------------------------------------------------------
 
 _vp: VirtualPointer | None = None
+_held_button: str | None = None
+
+
+def release_held() -> None:
+    """Best-effort release of a button an in-flight drag is holding.
+
+    Registered on the SIGTERM path (safety.on_shutdown): a click's
+    press/release pair never spans interpreter checkpoints where a signal
+    could land with the button down, but a drag holds it across ~200 ms of
+    cursor moves, and the kill switch must not end the process mid-hold."""
+    global _held_button
+    if _held_button and _vp is not None:
+        with contextlib.suppress(Exception):
+            _vp.button(_held_button, RELEASED)
+    _held_button = None
 
 
 def _with_pointer(fn: Callable[[VirtualPointer], Any]) -> Any:
@@ -176,7 +192,9 @@ def drag(x1: float, y1: float, x2: float, y2: float, button: str = "left") -> No
     time.sleep(0.03)
 
     def run(p: VirtualPointer) -> None:
+        global _held_button
         p.button(button, PRESSED)
+        _held_button = button
         try:
             steps = 12
             for i in range(1, steps + 1):
@@ -184,6 +202,7 @@ def drag(x1: float, y1: float, x2: float, y2: float, button: str = "left") -> No
                 time.sleep(0.015)
         finally:
             p.button(button, RELEASED)
+            _held_button = None
 
     _with_pointer(run)
 
