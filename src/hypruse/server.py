@@ -14,6 +14,8 @@ import contextlib
 import json
 import os
 import re
+import shutil
+import subprocess
 import sys
 import time
 from pathlib import Path
@@ -109,34 +111,41 @@ def desktop() -> dict[str, Any]:
     return hyprctl.snapshot()
 
 
-def _deliver_capture(
+def _image_mode() -> bool:
+    return os.environ.get("HYPRUSE_SCREENSHOT_MODE", "file") == "image"
+
+
+def _grab_env(
     window: str = "",
     region: str = "",
     scale: float = 0.0,
-    extra: dict[str, Any] | None = None,
     stable: bool = False,
     lossless: bool = False,
-) -> list[Any]:
-    """Capture and package for MCP transport: inline image + metadata in
-    image mode, a saved file path + metadata otherwise."""
+) -> tuple[bytes, dict[str, Any]]:
+    """Capture honoring the transport mode's limits: in image mode, fit the
+    result budget (base64 adds ~33%; Claude Desktop caps results at 1 MB)
+    by degrading format before resolution, and cap the long edge so the
+    host never downscales the image under the model."""
     grab = shot.capture_stable if stable else shot.capture
-    if os.environ.get("HYPRUSE_SCREENSHOT_MODE", "file") == "image":
-        # Fit the transport budget (base64 adds ~33%; Claude Desktop caps
-        # results at 1 MB) by degrading format before resolution.
+    if _image_mode():
         budget = int(os.environ.get("HYPRUSE_MAX_IMAGE_BYTES", "700000"))
         max_edge = int(os.environ.get("HYPRUSE_MAX_IMAGE_EDGE", "1568"))
-        data, meta = grab(
+        return grab(
             window, region, scale=scale, max_bytes=budget, max_edge=max_edge, lossless=lossless
         )
-        meta.update(extra or {})
+    return grab(window, region, scale=scale, lossless=lossless)
+
+
+def _package(data: bytes, meta: dict[str, Any]) -> list[Any]:
+    """Package an image for MCP transport: inline + metadata in image mode,
+    a saved file path + metadata otherwise."""
+    if _image_mode():
         image_block = ImageContent(
             type="image",
             data=base64.b64encode(data).decode(),
             mimeType=f"image/{meta['format']}",
         )
         return [image_block, TextContent(type="text", text=json.dumps(meta))]
-    data, meta = grab(window, region, scale=scale, lossless=lossless)
-    meta.update(extra or {})
     d = _runtime_dir()
     path = d / f"shot-{int(time.time() * 1000)}.{meta['format']}"
     path.write_bytes(data)
@@ -147,6 +156,19 @@ def _deliver_capture(
         ),
         TextContent(type="text", text=json.dumps(meta)),
     ]
+
+
+def _deliver_capture(
+    window: str = "",
+    region: str = "",
+    scale: float = 0.0,
+    extra: dict[str, Any] | None = None,
+    stable: bool = False,
+    lossless: bool = False,
+) -> list[Any]:
+    data, meta = _grab_env(window, region, scale=scale, stable=stable, lossless=lossless)
+    meta.update(extra or {})
+    return _package(data, meta)
 
 
 @mcp.tool()
@@ -282,6 +304,98 @@ def ui(window: str = "", name: str = "", actionable: bool = True) -> list[Any] |
     return _ui_read(window, name, actionable)
 
 
+def _magick_exe() -> str | None:
+    return next((exe for exe in ("magick", "convert") if shutil.which(exe)), None)
+
+
+def _draw_marks(
+    data: bytes, fmt: str, points: list[tuple[int, int, int]]
+) -> bytes | None:
+    """Draw numbered marks (a red dot with the number) at image-pixel
+    points, via ImageMagick like the other shell-out backends (grim,
+    wtype, busctl). Returns None when ImageMagick is not installed."""
+    exe = _magick_exe()
+    if exe is None:
+        return None
+    d = _runtime_dir()
+    src, dst = d / f"marks-src.{fmt}", d / f"marks-out.{fmt}"
+    src.write_bytes(data)
+    args = [exe, str(src)]
+    for mark, px, py in points:
+        label = str(mark)
+        args += ["-fill", "#d92626", "-stroke", "white", "-strokewidth", "1"]
+        args += ["-draw", f"circle {px},{py} {px + 9},{py}"]
+        tx = px - (4 if len(label) == 1 else 8)
+        args += ["-stroke", "none", "-fill", "white", "-pointsize", "13"]
+        args += ["-draw", f"text {tx},{py + 5} '{label}'"]
+    args.append(str(dst))
+    try:
+        proc = subprocess.run(args, capture_output=True, timeout=15)
+        if proc.returncode != 0:
+            return None
+        return dst.read_bytes()
+    finally:
+        for f in (src, dst):
+            with contextlib.suppress(OSError):
+                f.unlink()
+
+
+# the last marks capture, so click_ui(mark=N) can click a numbered control.
+# Offsets are WINDOW-RELATIVE and re-anchored to the window's current
+# position at click time, so a moved window does not invalidate the marks.
+_last_marks: dict[str, Any] = {}
+
+
+@mcp.tool()
+def marks(window: str = "", name: str = "") -> list[Any] | str:
+    """Set-of-Marks capture: a screenshot of the window WITH its accessible
+    controls drawn as numbered red marks, plus a JSON legend mapping each
+    number to the control's role, name, current value, and exact global
+    click point. One glance replaces the estimate-zoom-estimate loop for
+    every control the accessibility tree knows: read the number off the
+    image and call `click_ui(mark=N)` (or `pointer` at the legend's x,y).
+    `window` is an address from desktop (default: focused); `name` filters
+    the marked controls. Falls back to the plain legend when ImageMagick is
+    not installed, and to a fall-back-to-vision note when the app exposes
+    no tree (then use screenshot + zoom)."""
+    safety.touch("marks")
+    client = _resolve_window(window)
+    addr = client["address"]
+    elements = _ui_read(addr, name=name)
+    if isinstance(elements, str):
+        return elements
+    data, meta = _grab_env(window=addr, stable=True)
+    ox, oy = meta["geometry"][0], meta["geometry"][1]
+    scale = meta["scale"]
+    ax, ay = client["at"]
+    points: list[tuple[int, int, int]] = []
+    legend: list[dict[str, Any]] = []
+    stored: dict[int, dict[str, Any]] = {}
+    for i, e in enumerate(elements, start=1):
+        points.append((i, round((e["x"] - ox) * scale), round((e["y"] - oy) * scale)))
+        legend.append({"mark": i, **e})
+        stored[i] = {"dx": e["x"] - ax, "dy": e["y"] - ay,
+                     "label": f"{e['role']} {e['name']!r}"}
+    global _last_marks
+    _last_marks = {"window": addr, "items": stored}
+    legend_text = TextContent(
+        type="text",
+        text=json.dumps({"legend": legend, "hint": "click_ui(mark=N) clicks a numbered mark"}),
+    )
+    marked = _draw_marks(data, meta["format"], points)
+    if marked is None:
+        return [
+            TextContent(
+                type="text",
+                text="ImageMagick not found, returning the legend only (its "
+                "coordinates are exact; install imagemagick for marked captures)",
+            ),
+            legend_text,
+        ]
+    meta["target"] = "marks"
+    return [*_package(marked, meta), legend_text]
+
+
 _OBSERVE_MODES = ("none", "desktop", "screenshot", "ui")
 
 
@@ -379,6 +493,69 @@ def keyboard(
         hinput.key_combo(keys)
         return _acted(f"pressed {keys}{into}", then)
     raise ValueError(f"unknown action {action!r}: type|key")
+
+
+def click_ui(
+    name: str = "",
+    mark: int = 0,
+    window: str = "",
+    index: int = -1,
+    button: str = "left",
+    double: bool = False,
+    then: str = "none",
+) -> list[Any] | str:
+    """Click a control by its accessible NAME, or by a `mark` number from
+    the last `marks` capture, in ONE call: the exact coordinate comes from
+    the accessibility tree, the window is focused first, and the click goes
+    through the real pointer (visible cursor, same panic-kill guarantees),
+    so no screenshot and no pixel estimation is spent. Pass exactly one of
+    `name` (matched against `window`'s controls, exact accessible name
+    preferred, substring otherwise) or `mark`. An ambiguous name returns
+    the candidates instead of guessing: disambiguate with `index` (0-based
+    into that list) or a more specific name. Falls back with a note when
+    the app exposes no tree (use screenshot + zoom + pointer then).
+    `then` ('desktop'|'screenshot'|'ui'|'none') appends the result;
+    'ui' shows the click's effect on the controls in the same call."""
+    safety.touch("click_ui")
+    if bool(name) == bool(mark):
+        raise ValueError("pass exactly one of `name` or `mark`")
+    if mark:
+        if not _last_marks or mark not in _last_marks["items"]:
+            known = sorted(_last_marks.get("items", {}))
+            raise ValueError(
+                f"no mark {mark}; current marks: {known or 'none, call marks() first'}"
+            )
+        client = _resolve_window(_last_marks["window"])  # raises if the window is gone
+        item = _last_marks["items"][mark]
+        x, y = client["at"][0] + item["dx"], client["at"][1] + item["dy"]
+        desc = f"mark {mark} ({item['label']})"
+    else:
+        client = _resolve_window(window)
+        elements = _ui_read(client["address"], name=name)
+        if isinstance(elements, str):
+            return elements
+        exact = [e for e in elements if e["name"].lower() == name.lower()]
+        pool = exact or elements
+        if index >= 0:
+            if index >= len(pool):
+                raise ValueError(f"index {index} out of range: {len(pool)} candidates")
+            pool = [pool[index]]
+        if len(pool) > 1:
+            return [
+                TextContent(
+                    type="text",
+                    text=f"{name!r} is ambiguous ({len(pool)} candidates); call again "
+                    "with index=N (0-based) or a more specific name:",
+                ),
+                TextContent(type="text", text=json.dumps(pool)),
+            ]
+        e = pool[0]
+        x, y = e["x"], e["y"]
+        desc = f"{e['role']} {e['name']!r}"
+    hyprctl.dispatch("focuswindow", f"address:{client['address']}")
+    time.sleep(0.05)  # focus (and a possible workspace switch) settles first
+    hinput.click(x, y, button=button, double=double)
+    return _acted(f"clicked {desc} at ({x}, {y}) in {client.get('class', '')}", then)
 
 
 _ADDR = re.compile(r"^0x[0-9a-fA-F]+$")
@@ -645,7 +822,13 @@ def wait_for(event: str, match: str = "", timeout_s: float = 10) -> dict[str, An
     return {"event": hit[0], **hit[1]}
 
 
-_SEQ_HANDLERS = {"pointer": pointer, "keyboard": keyboard, "hypr": hypr, "wait_for": wait_for}
+_SEQ_HANDLERS = {
+    "pointer": pointer,
+    "keyboard": keyboard,
+    "hypr": hypr,
+    "wait_for": wait_for,
+    "click_ui": click_ui,
+}
 
 # Only STRUCTURAL changes invalidate a half-run plan. Focus changes
 # (activewindow/activewindowv2) and title updates are intentionally NOT
@@ -881,7 +1064,7 @@ def sequence(
 # (desktop, screenshot, zoom, ui, binds, wait_for) are decorated above and
 # always on. Clipboard is double-gated: opt-in env flag, never read-only.
 if not READONLY:
-    for _acting_tool in (pointer, keyboard, hypr, launch, use_bind, sequence):
+    for _acting_tool in (pointer, keyboard, click_ui, hypr, launch, use_bind, sequence):
         mcp.tool()(_acting_tool)
     if CLIPBOARD:
         mcp.tool()(clipboard)

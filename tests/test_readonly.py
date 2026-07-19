@@ -5,8 +5,8 @@ import pytest
 
 from hypruse import server as srv
 
-OBSERVE = {"desktop", "screenshot", "zoom", "ui", "binds", "wait_for"}
-ACT = {"pointer", "keyboard", "hypr", "launch", "use_bind", "sequence"}
+OBSERVE = {"desktop", "screenshot", "zoom", "ui", "marks", "binds", "wait_for"}
+ACT = {"pointer", "keyboard", "click_ui", "hypr", "launch", "use_bind", "sequence"}
 
 
 def _tool_names(module):
