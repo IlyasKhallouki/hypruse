@@ -145,6 +145,50 @@ def test_relative_workspace_switch_is_excused(wired, monkeypatch):
     assert "all 2/2" in _head(out)
 
 
+def test_keyboard_window_on_other_workspace_does_not_abort(wired, monkeypatch):
+    # keyboard(window=X) focuses X; if X is on another workspace, focusing
+    # switches to it and emits a workspace event. That is the sequence's OWN
+    # focus-induced switch, not a takeover: the following enter must still run
+    monkeypatch.setattr(srv.hyprctl, "query", lambda cmd: {"name": "8"})  # focus landed on ws 8
+    _stream(monkeypatch, [[("workspace", {"name": "8"})]])
+    steps = [
+        {"op": "keyboard", "action": "type", "text": "echo hi", "window": "0xterm"},
+        {"op": "keyboard", "action": "key", "keys": "enter"},
+    ]
+    out = srv.sequence(steps, then="none")
+    assert [s["op"] for s in wired] == ["keyboard", "keyboard"]  # enter ran
+    assert "all 2/2" in _head(out)
+
+
+def test_click_ui_step_focus_switch_is_excused(wired, monkeypatch):
+    # click_ui always focuses its target window; a cross-workspace target's
+    # switch must not abort a following step either
+    monkeypatch.setattr(srv.hyprctl, "query", lambda cmd: {"name": "5"})
+    _stream(monkeypatch, [[("workspace", {"name": "5"})]])
+    steps = [
+        {"op": "click_ui", "name": "Save", "window": "0xapp"},
+        {"op": "keyboard", "action": "key", "keys": "enter"},
+    ]
+    out = srv.sequence(steps, then="none")
+    assert [s["op"] for s in wired] == ["click_ui", "keyboard"]
+    assert "all 2/2" in _head(out)
+
+
+def test_keyboard_without_window_still_stops_on_workspace_takeover(wired, monkeypatch):
+    # the excuse is scoped to focus-capable steps: a plain keyboard step (no
+    # window=) cannot switch workspaces, so a workspace event after it IS a
+    # human takeover and must still stop the run
+    monkeypatch.setattr(srv.hyprctl, "query", lambda cmd: {"name": "3"})
+    _stream(monkeypatch, [[("workspace", {"name": "9"})]])
+    steps = [
+        {"op": "keyboard", "action": "type", "text": "hi"},
+        {"op": "keyboard", "action": "key", "keys": "enter"},
+    ]
+    out = srv.sequence(steps, then="none")
+    assert [s["op"] for s in wired] == ["keyboard"]  # enter did NOT run
+    assert "stopped after 1/2" in _head(out) and "workspace" in _head(out)
+
+
 def test_move_window_expected_by_address(wired, monkeypatch):
     _stream(monkeypatch, [[("movewindow", {"address": "0xA", "workspace": "3"})]])
     steps = [

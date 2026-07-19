@@ -961,6 +961,19 @@ def _step_expected_signatures(step: dict[str, Any]) -> set[str]:
     return set()  # focus_window/fullscreen/floating cause only unwatched focus churn
 
 
+def _step_may_switch_workspace(step: dict[str, Any]) -> bool:
+    """Whether a step can pull the compositor to another workspace by
+    focusing a window that lives there. Focusing a window on a non-visible
+    workspace switches to it, emitting a `workspace` event that is the
+    sequence's OWN doing, not a human takeover."""
+    op, action = step.get("op"), step.get("action", "")
+    if op == "hypr":
+        return action in ("workspace", "focus_window", "fullscreen")
+    if op == "keyboard":
+        return bool(step.get("window"))  # window= focuses the target first
+    return op == "click_ui"  # click_ui always focuses its target window first
+
+
 def _step_wait_names(step: dict[str, Any]) -> set[str]:
     """Watched event NAMES an upcoming wait_for step will consume: a change
     the sequence explicitly plans to wait for (click a launcher, then wait
@@ -1109,11 +1122,13 @@ def sequence(
             label = step.get("action") or step.get("event") or ""
             results.append(f"[{i}] {step.get('op')} {label}: {res}".rstrip())
             prev_expected = _step_expected_signatures(step)
-            if step.get("op") == "hypr" and step.get("action") == "workspace":
-                # relative and alias targets ('+1', 'e+1', 'previous') emit
-                # the RESOLVED workspace name, which never equals the literal
-                # argument; ask the compositor what our own switch landed on
-                # so the drain does not mistake it for a human takeover
+            if _step_may_switch_workspace(step):
+                # A step that focuses a window (or `hypr workspace` with a
+                # relative/alias target like '+1') lands on a workspace whose
+                # emitted name we cannot predict from the arguments; ask the
+                # compositor what our own action landed on and excuse it, so
+                # the drain does not mistake our focus-induced switch for a
+                # human takeover.
                 with contextlib.suppress(Exception):
                     ws = hyprctl.query("activeworkspace") or {}
                     prev_expected.add(f"workspace:{ws.get('name', '')}")
