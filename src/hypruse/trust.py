@@ -234,6 +234,50 @@ def _covers(client: dict[str, Any], x: float, y: float) -> bool:
     return at[0] <= x < at[0] + size[0] and at[1] <= y < at[1] + size[1]
 
 
+def covering_layer(x: float, y: float) -> dict[str, Any] | None:
+    """The focus-stealing layer surface (launcher, lock screen, on-screen
+    keyboard) whose rect covers (x, y), or None. Layer surfaces sit above
+    windows, so input aimed at a window under one lands on the layer
+    instead, and _windows_under cannot see that (`clients` never lists
+    layer surfaces). Positive-detection only (known kinds), and
+    best-effort by design: this is a truthfulness aid, not a confinement
+    boundary, so an unreadable layer list yields None rather than
+    blocking every click."""
+    try:
+        surfaces = hyprctl.parse_layers(hyprctl.query("layers"))
+    except Exception:
+        return None
+    for s in surfaces:
+        if s.get("kind") not in hyprctl.FOCUS_STEALING_KINDS:
+            continue
+        g = s.get("geometry") or []
+        if (
+            len(g) == 4
+            and None not in g
+            and g[0] <= x < g[0] + g[2]
+            and g[1] <= y < g[1] + g[3]
+        ):
+            return s
+    return None
+
+
+def guard_covering_layer(x: float, y: float) -> None:
+    """Refuse a window-targeted click while a focus-stealing layer covers
+    the point: the layer would receive the click, the window's control
+    never would, and reporting 'clicked' would be a lie. For click_ui,
+    whose target is by definition a window control; a bare pointer click
+    may legitimately aim at the layer itself, so it gets a warning in its
+    result instead of a refusal."""
+    s = covering_layer(x, y)
+    if s is not None:
+        raise TrustError(
+            f"({x:.0f}, {y:.0f}) is covered by the {s['kind']} layer surface "
+            f"{s['namespace']!r}: the click would land on that layer, not on "
+            "the window's control. Close it first (usually esc), or drive it "
+            "deliberately with `pointer`."
+        )
+
+
 # --- authentication interlock -----------------------------------------------
 
 # Desktop authentication agents: their windows own a separate trust domain

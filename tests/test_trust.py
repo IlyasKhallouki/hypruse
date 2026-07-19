@@ -316,3 +316,46 @@ def test_notify_capture_rate_limited(monkeypatch):
     trust.notify_capture()  # t=100.5: within 3s, suppressed
     trust.notify_capture()  # t=200: fires again
     assert len(notes) == 2
+
+
+# --- focus-stealing layer coverage -------------------------------------------
+
+
+LAYERS_RAW = {
+    "DP-1": {
+        "levels": {
+            "2": [{"namespace": "waybar", "x": 0, "y": 0, "w": 1920, "h": 30}],
+            "3": [{"namespace": "rofi", "x": 560, "y": 300, "w": 800, "h": 480}],
+        }
+    }
+}
+
+
+def test_covering_layer_finds_the_launcher_over_the_point(monkeypatch):
+    monkeypatch.setattr(trust.hyprctl, "query", lambda cmd: LAYERS_RAW)
+    hit = trust.covering_layer(600, 350)
+    assert hit["namespace"] == "rofi" and hit["kind"] == "launcher"
+    assert trust.covering_layer(600, 900) is None  # below the surface
+
+
+def test_covering_layer_ignores_bars(monkeypatch):
+    # a bar covers its strip permanently but is not a seat takeover
+    monkeypatch.setattr(trust.hyprctl, "query", lambda cmd: LAYERS_RAW)
+    assert trust.covering_layer(10, 10) is None
+
+
+def test_covering_layer_fails_open_when_layers_unreadable(monkeypatch):
+    # truthfulness aid, not a confinement boundary: an unreadable layer
+    # list must not start blocking every click
+    def boom(cmd):
+        raise trust.hyprctl.HyprctlError("hyprctl down")
+
+    monkeypatch.setattr(trust.hyprctl, "query", boom)
+    assert trust.covering_layer(1, 1) is None
+
+
+def test_guard_covering_layer_refuses_with_the_layer_named(monkeypatch):
+    monkeypatch.setattr(trust.hyprctl, "query", lambda cmd: LAYERS_RAW)
+    with pytest.raises(trust.TrustError, match="rofi"):
+        trust.guard_covering_layer(600, 350)
+    trust.guard_covering_layer(600, 900)  # uncovered point: no raise

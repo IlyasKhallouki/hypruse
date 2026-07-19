@@ -47,6 +47,9 @@ def wired(monkeypatch):
         lambda x, y, button="left", double=False: calls["clicks"].append((x, y, button)),
     )
     monkeypatch.setattr(srv.time, "sleep", lambda s: None)
+    # no layer surface covers anything unless a test says so (the real
+    # check would query the live compositor)
+    monkeypatch.setattr(srv.trust, "covering_layer", lambda x, y: None)
     calls["client"] = client
     return calls
 
@@ -178,3 +181,16 @@ def test_click_ui_then_ui_observes_the_clicked_window(wired, monkeypatch):
     monkeypatch.setattr(srv, "_ui_read", ui_read)
     srv.click_ui(name="Body", then="ui")
     assert reads == ["0xa", "0xa"]  # resolution, then the fused observation
+
+
+def test_click_ui_refuses_under_a_focus_stealing_layer(wired, monkeypatch):
+    # a launcher over the point would swallow the click while the result
+    # claimed success; the refusal must come before any side effect
+    monkeypatch.setattr(
+        srv.trust, "covering_layer",
+        lambda x, y: {"namespace": "rofi", "kind": "launcher"},
+    )
+    with pytest.raises(srv.trust.TrustError, match="rofi"):
+        srv.click_ui(name="Save")
+    assert wired["clicks"] == []
+    assert wired["dispatch"] == []  # not even focused

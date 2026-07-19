@@ -151,3 +151,28 @@ def test_capture_rebaselines_the_strict_seat_guard(monkeypatch):
         srv.trust.guard_seat()
     srv._deliver_capture()
     srv.trust.guard_seat()  # re-armed: no raise
+
+
+def test_pointer_click_warns_under_a_focus_stealing_layer(monkeypatch):
+    # pointer may legitimately aim at the layer itself (that is how a
+    # launcher is driven), so it warns instead of refusing, and the
+    # warning tells the truth about where the input went
+    monkeypatch.setattr(srv.safety, "touch", lambda *a: None)
+    monkeypatch.setattr(srv.trust, "guard_pointer", lambda *a, **k: None)
+    monkeypatch.setattr(
+        srv.trust, "covering_layer",
+        lambda x, y: {"namespace": "rofi", "kind": "launcher"},
+    )
+    monkeypatch.setattr(srv.hinput, "click", lambda *a, **k: None)
+    monkeypatch.setattr(srv.hyprctl, "cursor_pos", lambda: (600, 350))
+    out = srv.pointer("click", x=600, y=350)
+    assert "rofi" in out and "not to any window beneath" in out
+
+
+def test_pointer_click_is_silent_without_a_covering_layer(monkeypatch):
+    monkeypatch.setattr(srv.safety, "touch", lambda *a: None)
+    monkeypatch.setattr(srv.trust, "guard_pointer", lambda *a, **k: None)
+    monkeypatch.setattr(srv.trust, "covering_layer", lambda x, y: None)
+    monkeypatch.setattr(srv.hinput, "click", lambda *a, **k: None)
+    monkeypatch.setattr(srv.hyprctl, "cursor_pos", lambda: (600, 350))
+    assert srv.pointer("click", x=600, y=350) == "click ok; cursor now at (600, 350)"

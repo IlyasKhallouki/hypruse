@@ -187,6 +187,13 @@ def layer_kind(namespace: str) -> str:
     return "unknown"
 
 
+# layer kinds that take the seat over from the windows beneath them: a
+# launcher or lock screen grabs the keyboard, and any of these receives
+# (or swallows) pointer input aimed at whatever its surface covers. Bars
+# and notification popups are surfaces too, but not a takeover.
+FOCUS_STEALING_KINDS = frozenset({"launcher", "lock", "osk"})
+
+
 def parse_layers(raw: dict[str, Any]) -> list[dict[str, Any]]:
     """Flatten `hyprctl layers -j` (monitor -> level -> surfaces) into a
     model view. The background level (wallpaper daemons) is dropped as

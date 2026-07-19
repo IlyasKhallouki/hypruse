@@ -452,6 +452,27 @@ def _acted(msg: str, then: str, window: str = "") -> list[Any] | str:
     raise ValueError(f"unknown then {then!r}: {'|'.join(_OBSERVE_MODES)}")
 
 
+def _layer_note(x: float | None, y: float | None) -> str:
+    """A warning to append when a focus-stealing layer surface covers the
+    point a pointer action lands on: the layer receives (or swallows) the
+    input, so a silent 'ok' would misreport what happened to the window
+    beneath. The action itself is not refused, because clicking INTO a
+    launcher is the legitimate way to drive one and pointer cannot know
+    the intent; click_ui, whose target is a window control, refuses."""
+    if x is None or y is None:
+        try:
+            x, y = hyprctl.cursor_pos()
+        except Exception:
+            return ""
+    covering = trust.covering_layer(x, y)
+    if covering is None:
+        return ""
+    return (
+        f"; NOTE: the {covering['kind']} layer {covering['namespace']!r} covers "
+        "this point, so the input went to it, not to any window beneath"
+    )
+
+
 def pointer(
     action: str,
     x: float | None = None,
@@ -475,6 +496,7 @@ def pointer(
     refusal to click over a system authentication dialog."""
     safety.touch(f"pointer:{action}")
     trust.guard_seat()
+    note = ""
     if action == "move":
         # a move only repositions the cursor; the input-delivering actions
         # below are the ones the confinement and auth guards gate
@@ -483,20 +505,23 @@ def pointer(
         hinput.move(x, y)
     elif action == "click":
         trust.guard_pointer(x, y, allow_auth)  # None x/y = click at current cursor
+        note = _layer_note(x, y)
         hinput.click(x, y, button=button, double=double)
     elif action == "drag":
         if None in (x, y, to_x, to_y):
             raise ValueError("drag needs x, y, to_x, to_y")
         trust.guard_pointer(x, y, allow_auth)
         trust.guard_pointer(to_x, to_y, allow_auth)  # the drag ends elsewhere; guard that too
+        note = _layer_note(x, y)
         hinput.drag(x, y, to_x, to_y, button=button)  # type: ignore[arg-type]
     elif action == "scroll":
         trust.guard_pointer(x, y, allow_auth)  # None x/y = scroll at current cursor
+        note = _layer_note(x, y)
         hinput.scroll(dy=scroll_dy, dx=scroll_dx, x=x, y=y)
     else:
         raise ValueError(f"unknown action {action!r}: move|click|drag|scroll")
     trust.remember_seat()
-    return _acted(f"{action} ok; cursor now at {hyprctl.cursor_pos()}", then)
+    return _acted(f"{action} ok; cursor now at {hyprctl.cursor_pos()}{note}", then)
 
 
 def keyboard(
@@ -616,6 +641,9 @@ def click_ui(
         desc = f"{e['role']} {e['name']!r}"
     trust.guard_client(client)  # confinement
     trust.guard_auth_client(client, allow_auth)
+    # a launcher/lock layer over the point would swallow the click while
+    # the result claimed success; refuse before any side effect
+    trust.guard_covering_layer(x, y)
     hyprctl.dispatch("focuswindow", f"address:{client['address']}")
     time.sleep(0.05)  # focus (and a possible workspace switch) settles first
     hinput.click(x, y, button=button, double=double)
@@ -987,12 +1015,9 @@ _WATCHED_EVENTS = {
     "openwindow", "closewindow", "movewindow", "workspace", "openlayer", "closelayer",
 }
 
-_FOCUS_STEALING_LAYERS = {"launcher", "lock", "osk"}
-
-
 def _structural(name: str, payload: dict[str, Any]) -> bool:
     if name in ("openlayer", "closelayer"):
-        return hyprctl.layer_kind(payload.get("namespace", "")) in _FOCUS_STEALING_LAYERS
+        return hyprctl.layer_kind(payload.get("namespace", "")) in hyprctl.FOCUS_STEALING_KINDS
     return name in _WATCHED_EVENTS
 
 _SEQ_MAX_STEPS = 20
