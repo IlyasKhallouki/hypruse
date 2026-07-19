@@ -13,8 +13,12 @@ toward LESS action, never more.
                       allow_auth overrides)
   HYPRUSE_STRICT      refuse to act when the seat moved without hypruse
                       since its last action (human or app took over)
-  HYPRUSE_MARK        border every agent-owned window and flash an on-screen
-                      notice on capture, so the human sees the agent's hands
+  HYPRUSE_MARK        tag every agent-owned window `hypruse-owned` and flash
+                      an on-screen notice when the agent opens a window or
+                      captures the screen; also best-effort installs a
+                      border_color windowrule on that tag (add it to your
+                      config for a guaranteed outline, since a runtime rule
+                      does not render on every Hyprland version/config)
 
 The server calls the guard_* functions at the top of each acting tool; a
 raised TrustError becomes the tool's error, which the MCP client surfaces.
@@ -26,7 +30,7 @@ import contextlib
 import os
 from typing import Any
 
-from hypruse import a11y, hyprctl, safety
+from hypruse import a11y, hyprctl
 
 
 class TrustError(RuntimeError):
@@ -44,14 +48,17 @@ _owned: set[str] = set()  # window addresses hypruse launched this session
 _OWNED_TAG = "hypruse-owned"
 
 
-def note_launched(address: str) -> None:
-    """Record a window hypruse opened, so `launched` confinement and the
-    ownership border know it is the agent's."""
-    if address:
-        _owned.add(address)
-        if _flag("HYPRUSE_MARK"):
-            with contextlib.suppress(hyprctl.HyprctlError):
-                hyprctl.dispatch("tagwindow", f"+{_OWNED_TAG}", f"address:{address}")
+def note_launched(address: str, label: str = "") -> None:
+    """Record a window hypruse opened (for `launched` confinement), and when
+    HYPRUSE_MARK is on, make it legible: tag it `hypruse-owned` (which the
+    border rule from init_marking colors) and flash an on-screen notice."""
+    if not address:
+        return
+    _owned.add(address)
+    if _flag("HYPRUSE_MARK"):
+        with contextlib.suppress(hyprctl.HyprctlError):
+            hyprctl.dispatch("tagwindow", f"+{_OWNED_TAG}", f"address:{address}")
+        hyprctl.notify(f"hypruse opened {label}".rstrip(), ms=2500, color="rgb(ff5555)")
 
 
 def owned() -> set[str]:
@@ -341,21 +348,31 @@ def marking_on() -> bool:
     return _flag("HYPRUSE_MARK")
 
 
+# Border color for agent-owned windows. The rule matches the tag hypruse
+# applies in note_launched, and Hyprland re-evaluates it when the tag is
+# set, so windows tagged after they open still get the border. The matcher
+# spelling changed across Hyprland versions (0.42+ dropped the colon:
+# `tag NAME`, older is `tag:NAME`) and the field was renamed from the
+# deprecated `windowrulev2 bordercolor` to `windowrule border_color` with a
+# single 6-char color, so we try the current form first and fall back.
+_BORDER_RULES = (
+    f"border_color rgb(ff5555), tag {_OWNED_TAG}",   # Hyprland 0.42+
+    f"border_color rgb(ff5555), tag:{_OWNED_TAG}",   # older
+)
+
+
 def init_marking() -> None:
-    """Install a runtime border rule for agent-owned windows and arrange to
-    remove it at shutdown. No-op unless HYPRUSE_MARK is set."""
+    """Install the agent-owned border rule once at startup (best-effort;
+    no-op unless HYPRUSE_MARK is set). Left in place on exit: it only colors
+    windows carrying hypruse's own tag, and a config reload clears it."""
     if not marking_on():
         return
-    with contextlib.suppress(hyprctl.HyprctlError):
-        hyprctl.keyword(
-            "windowrulev2", f"bordercolor rgb(ff5555) rgb(ff2222), tag:{_OWNED_TAG}"
-        )
-    safety.on_shutdown(_teardown_marking)
-
-
-def _teardown_marking() -> None:
-    with contextlib.suppress(hyprctl.HyprctlError):
-        hyprctl.keyword("windowrulev2", f"unset, tag:{_OWNED_TAG}")
+    for rule in _BORDER_RULES:
+        try:
+            hyprctl.keyword("windowrule", rule)
+            return  # first accepted form wins
+        except hyprctl.HyprctlError:
+            continue
 
 
 _last_notify: dict[str, float] = {"ts": 0.0}

@@ -735,7 +735,8 @@ def launch(command: str, workspace: str = "", wait_s: float = 8.0) -> dict[str, 
             "single-instance apps may open late and on their own workspace; call "
             "desktop() to find the window, then hypr move_window if needed"
         )
-    trust.note_launched(win["address"])  # owned-set for `launched` confinement + border
+    # owned-set for `launched` confinement; tag + notify when HYPRUSE_MARK
+    trust.note_launched(win["address"], win.get("class", ""))
     trust.remember_seat()  # the new window took focus; re-baseline for the seat guard
     ws = win.get("workspace", {})
     result: dict[str, Any] = {
@@ -1158,7 +1159,7 @@ def main() -> None:
     session.ensure_session_env()
     safety.init()
     safety.on_shutdown(hinput.release_held)  # kill switch mid-drag: release first
-    trust.init_marking()  # HYPRUSE_MARK: border owned windows, remove rule on exit
+    trust.init_marking()  # HYPRUSE_MARK: install the agent-owned border rule
     mcp.run()
 
 

@@ -6,6 +6,22 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.9.1] - 2026-07-19
+
+### Fixed
+- `HYPRUSE_MARK` ownership marking was a no-op on modern Hyprland. The
+  0.9.0 code used `hyprctl keyword windowrulev2 "bordercolor ..."`, but
+  `windowrulev2` is deprecated (a no-op), the field was renamed to
+  `border_color`, it takes a single 6-char color, and the tag matcher
+  dropped its colon (`tag NAME`), so the rule was silently rejected and
+  swallowed. Marking now: reliably tags each agent-owned window
+  `hypruse-owned` and flashes an on-screen notice when the agent opens a
+  window (both verified working), and best-effort installs the corrected
+  `border_color` windowrule (current and legacy matcher forms). A runtime
+  window rule does not render on every Hyprland version/config, so the
+  README documents the one-line config rule for a guaranteed outline;
+  hypruse's tagging matches it.
+
 ## [0.9.0] - 2026-07-19
 
 ### Added

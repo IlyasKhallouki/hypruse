@@ -234,21 +234,56 @@ def test_seat_guard_detects_drift(monkeypatch):
 # --- ownership marking ------------------------------------------------------
 
 
-def test_note_launched_tags_when_marking(monkeypatch):
+def test_init_marking_installs_border_rule(monkeypatch):
     monkeypatch.setenv("HYPRUSE_MARK", "1")
-    dispatched = []
+    rules = []
+    monkeypatch.setattr(trust.hyprctl, "keyword", lambda kw, rule: rules.append((kw, rule)))
+    trust.init_marking()
+    assert rules == [("windowrule", "border_color rgb(ff5555), tag hypruse-owned")]
+
+
+def test_init_marking_falls_back_to_legacy_matcher(monkeypatch):
+    monkeypatch.setenv("HYPRUSE_MARK", "1")
+    tried = []
+
+    def keyword(kw, rule):
+        tried.append(rule)
+        if "tag hypruse-owned" in rule:  # modern form rejected on older Hyprland
+            raise trust.hyprctl.HyprctlError("invalid")
+
+    monkeypatch.setattr(trust.hyprctl, "keyword", keyword)
+    trust.init_marking()
+    assert tried == [
+        "border_color rgb(ff5555), tag hypruse-owned",
+        "border_color rgb(ff5555), tag:hypruse-owned",
+    ]
+
+
+def test_init_marking_noop_without_flag(monkeypatch):
+    called = []
+    monkeypatch.setattr(trust.hyprctl, "keyword", lambda *a: called.append(a))
+    trust.init_marking()
+    assert called == []
+
+
+def test_note_launched_tags_and_notifies_when_marking(monkeypatch):
+    monkeypatch.setenv("HYPRUSE_MARK", "1")
+    dispatched, notes = [], []
     monkeypatch.setattr(trust.hyprctl, "dispatch", lambda *a: dispatched.append(a))
-    trust.note_launched("0xnew")
+    monkeypatch.setattr(trust.hyprctl, "notify", lambda msg, **k: notes.append(msg))
+    trust.note_launched("0xnew", "firefox")
     assert "0xnew" in trust.owned()
     assert ("tagwindow", "+hypruse-owned", "address:0xnew") in dispatched
+    assert notes == ["hypruse opened firefox"]  # visible presence toast
 
 
-def test_note_launched_no_tag_without_marking(monkeypatch):
-    dispatched = []
+def test_note_launched_no_tag_or_notify_without_marking(monkeypatch):
+    dispatched, notes = [], []
     monkeypatch.setattr(trust.hyprctl, "dispatch", lambda *a: dispatched.append(a))
-    trust.note_launched("0xnew")
+    monkeypatch.setattr(trust.hyprctl, "notify", lambda *a, **k: notes.append(a))
+    trust.note_launched("0xnew", "firefox")
     assert "0xnew" in trust.owned()  # still tracked for `launched` confinement
-    assert dispatched == []  # but no border tag
+    assert dispatched == [] and notes == []  # but no tag, no toast
 
 
 def test_notify_capture_rate_limited(monkeypatch):
