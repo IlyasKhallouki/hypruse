@@ -6,6 +6,55 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Fixed
+- The pixel-to-global coordinate contract on scaled monitors, two root
+  causes found by an adversarial audit. grim's `-s` flag is an ABSOLUTE
+  logical-to-pixel factor, not a multiplier of native pixels: every
+  capture that emitted `-s` (the image-mode edge cap, an explicit
+  `scale`, or a byte-budget rung) came back smaller than intended on any
+  monitor with scale other than 1.0 while the metadata claimed otherwise,
+  so mapped clicks landed off by the monitor scale (halved on a 2x
+  display). And a capture rect straddling monitors with different scales
+  is rendered by grim at the GREATEST intersected scale, not the scale
+  under the rect's top-left corner. Both paths now model grim's real
+  semantics, with HiDPI and cross-seam regression tests.
+- `sequence`: a `wait_for` step now runs against the sequence's own event
+  stream. The between-step settle drain used to consume the very event
+  the wait then waited for on a fresh socket, so click-then-wait (the
+  documented pattern) falsely timed out for any app that mapped its
+  window within the 0.2s settle.
+- `sequence`: a workspace step with a relative or alias target (`+1`,
+  `e+1`, `previous`) no longer aborts the rest of the sequence. The
+  compositor reports the resolved workspace name, which never equaled
+  the literal argument, so the sequence mistook its own switch for a
+  human takeover.
+- `wait_for('workspace')` with no `match` filter now actually waits for
+  the next switch instead of returning the current workspace instantly
+  as already-satisfied. A filtered workspace wait still pre-checks.
+- The Waybar module builds its JSON with `jq` and the beacon whitelists
+  `last_action` down to a plain token: a crafted tool argument could
+  previously inject JSON through the hand-built module output and blank
+  the robot indicator while the agent still had hands on the desktop.
+- The SIGTERM kill switch arriving mid-`drag` now releases the held
+  button before the process dies, via a registered cleanup; a drag holds
+  a button across ~200 ms of cursor moves, the one window the
+  one-call press/release guarantee did not cover.
+- Concurrent tool calls can no longer interleave input on the shared
+  seat: pointer and keyboard operations are serialized by a reentrant
+  lock (MCP hosts may issue tool calls in parallel and sync tools run on
+  worker threads). The kill-switch cleanup stays lock-free.
+
+### Changed
+- CI tests all four advertised Python versions (3.11-3.14); the `mcp`
+  dependency gets an upper bound (`<2`); both PKGBUILDs declare the
+  `hyprland` runtime dependency; RELEASING.md documents bumping both
+  version sources and a test enforces their agreement.
+- README/ARCHITECTURE drift reconciled: 13 tools, `ui` listed in
+  read-only mode, `sequence` listed among `then=` takers, lossless-PNG
+  timing re-measured (~800 ms, not ~440 ms), `HYPRUSE_MAX_IMAGE_EDGE`
+  documented, and a new security-model layer names prompt injection via
+  on-screen text as untrusted input with approval as the backstop.
+
 ## [0.7.0] - 2026-07-18
 
 ### Added
