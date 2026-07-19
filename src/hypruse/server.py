@@ -561,17 +561,20 @@ def _already_satisfied(event: str, needle: str) -> dict[str, Any] | None:
     happened? A trigger tool call returns before the agent can call
     wait_for, so a fast event fires before we subscribe. Checking current
     state first catches that. Only unambiguous cases: a close is 'already
-    done' if nothing matches; a workspace wait is done if it is active."""
+    done' if nothing matches; a filtered workspace wait is done if that
+    workspace is active. An UNFILTERED workspace wait means 'the next
+    switch, whatever it is': the current workspace always exists, so
+    pre-checking it would answer instantly without ever blocking."""
     if event == "window_close" and needle:
         for c in hyprctl.query("clients"):
             hay = f"{c.get('address', '')} {c.get('class', '')} {c.get('title', '')}".lower()
             if needle in hay:
                 return None  # still open, wait for the real event
         return {"event": "closewindow", "already": True}
-    if event == "workspace":
+    if event == "workspace" and needle:
         ws = hyprctl.query("activeworkspace") or {}
         name = str(ws.get("name", ""))
-        if not needle or needle in name.lower():
+        if needle in name.lower():
             return {"event": "workspace", "name": name, "already": True}
     return None
 
@@ -688,6 +691,48 @@ def _unexpected(drained, expected_sigs, wait_names):
     ]
 
 
+def _seq_wait_for(
+    stream: events.EventStream,
+    backlog: list[tuple[str, dict[str, Any]]],
+    step: dict[str, Any],
+    budget_left: float,
+) -> dict[str, Any] | str:
+    """A wait_for step inside a sequence, satisfied from the sequence's OWN
+    event stream. The between-step settle drain has already consumed any
+    event that fired during the previous step, so a fresh EventStream (what
+    the standalone tool opens) could never see it and a fast app would
+    always 'time out'. Check the drained backlog first, then keep listening
+    on the same connection."""
+    event = step.get("event", "")
+    names = _WAIT_EVENTS.get(event)
+    if names is None:
+        raise ValueError(f"unknown event {event!r}: {'|'.join(_WAIT_EVENTS)}")
+    safety.touch(f"wait_for:{event}")
+    needle = str(step.get("match", "")).lower()
+    timeout_s = min(max(float(step.get("timeout_s", 10)), 1.0), 60.0, max(budget_left, 1.0))
+
+    already = _already_satisfied(event, needle)
+    if already is not None:
+        return already
+
+    def matcher(_name: str, payload: dict[str, Any]) -> bool:
+        if not needle:
+            return True
+        return needle in " ".join(str(v) for v in payload.values()).lower()
+
+    for i, (n, p) in enumerate(backlog):
+        if n in names and matcher(n, p):
+            del backlog[i]
+            return {"event": n, **p}
+    try:
+        hit = stream.wait_for(names, matcher, timeout_s)
+    except events.EventError as exc:
+        return f"event socket unavailable: {exc}"
+    if hit is None:
+        return f"timeout: no matching {event} event within {timeout_s:.0f}s"
+    return {"event": hit[0], **hit[1]}
+
+
 def sequence(
     steps: list[dict[str, Any]], stop_on_change: bool = True, then: str = "desktop"
 ) -> list[Any] | str:
@@ -719,11 +764,13 @@ def sequence(
     results: list[str] = []
     stopped: str | None = None
     prev_expected: set[str] = set()
+    backlog: list[tuple[str, dict[str, Any]]] = []  # drained events a wait step may consume
     deadline = time.monotonic() + _SEQ_BUDGET
     try:
         for i, step in enumerate(steps):
             if stream is not None and i > 0:
                 drained = stream.drain(_SEQ_SETTLE)
+                backlog.extend(drained)
                 changed = _unexpected(drained, prev_expected, _step_wait_names(step))
                 if changed:
                     names = ", ".join(sorted({n for n, _ in changed}))
@@ -737,7 +784,10 @@ def sequence(
             if step.get("op") == "wait_for":  # never let one wait outlast the budget
                 run["timeout_s"] = min(float(step.get("timeout_s", 10)), max(budget_left, 1.0))
             try:
-                res = _dispatch_step(run)
+                if step.get("op") == "wait_for" and stream is not None:
+                    res = _seq_wait_for(stream, backlog, run, budget_left)
+                else:
+                    res = _dispatch_step(run)
             except Exception as exc:
                 results.append(f"[{i}] {step.get('op')}: ERROR {exc}")
                 stopped = f"step {i} raised: {exc}"
@@ -745,6 +795,14 @@ def sequence(
             label = step.get("action") or step.get("event") or ""
             results.append(f"[{i}] {step.get('op')} {label}: {res}".rstrip())
             prev_expected = _step_expected_signatures(step)
+            if step.get("op") == "hypr" and step.get("action") == "workspace":
+                # relative and alias targets ('+1', 'e+1', 'previous') emit
+                # the RESOLVED workspace name, which never equals the literal
+                # argument; ask the compositor what our own switch landed on
+                # so the drain does not mistake it for a human takeover
+                with contextlib.suppress(Exception):
+                    ws = hyprctl.query("activeworkspace") or {}
+                    prev_expected.add(f"workspace:{ws.get('name', '')}")
     finally:
         if stream is not None:
             # the last step can change the desktop too; a `then` observation
@@ -786,6 +844,7 @@ def main() -> None:
         return
     session.ensure_session_env()
     safety.init()
+    safety.on_shutdown(hinput.release_held)  # kill switch mid-drag: release first
     mcp.run()
 
 

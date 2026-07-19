@@ -10,16 +10,27 @@ from hypruse import server as srv
 
 class FakeStream:
     """Stands in for events.EventStream: yields a scripted list of event
-    batches, one per drain() call, then empty batches forever."""
+    batches, one per drain() call, then empty batches forever. `waits`
+    scripts events for wait_for() calls on the same stream."""
 
-    def __init__(self, batches):
+    def __init__(self, batches, waits=None):
         self.batches = list(batches)
+        self.waits = list(waits or [])
         self.closed = False
         self.drains = 0
+        self.wait_calls = []
 
     def drain(self, settle=0.08):
         self.drains += 1
         return self.batches.pop(0) if self.batches else []
+
+    def wait_for(self, names, matcher, timeout):
+        self.wait_calls.append((set(names), timeout))
+        while self.waits:
+            n, p = self.waits.pop(0)
+            if n in names and (matcher is None or matcher(n, p)):
+                return n, p
+        return None
 
     def close(self):
         self.closed = True
@@ -31,6 +42,7 @@ def wired(monkeypatch):
     ran = []
     monkeypatch.setattr(srv.safety, "touch", lambda *a: None)
     monkeypatch.setattr(srv.hyprctl, "snapshot", lambda: {"snap": True})
+    monkeypatch.setattr(srv.hyprctl, "query", lambda cmd: {"name": ""})
 
     def fake_dispatch(step):
         ran.append(step)
@@ -46,8 +58,8 @@ def _head(out):
     return out[0].text if isinstance(out, list) else out
 
 
-def _stream(monkeypatch, batches):
-    stream = FakeStream(batches)
+def _stream(monkeypatch, batches, waits=None):
+    stream = FakeStream(batches, waits)
     monkeypatch.setattr(srv.events, "EventStream", lambda: stream)
     return stream
 
@@ -103,6 +115,7 @@ def test_expected_workspace_switch_is_excused(wired, monkeypatch):
 def test_human_switching_to_other_workspace_stops(wired, monkeypatch):
     # payload-aware: a switch to a DIFFERENT workspace than the step's is a
     # real takeover, even though it is the same event type
+    monkeypatch.setattr(srv.hyprctl, "query", lambda cmd: {"name": "3"})  # our switch landed
     _stream(monkeypatch, [[("workspace", {"name": "5"})]])
     steps = [
         {"op": "hypr", "action": "workspace", "workspace": "3"},
@@ -111,6 +124,20 @@ def test_human_switching_to_other_workspace_stops(wired, monkeypatch):
     out = srv.sequence(steps, then="none")
     assert [s["op"] for s in wired] == ["hypr"]  # click never ran
     assert "workspace" in _head(out) and "stopped after 1/2" in _head(out)
+
+
+def test_relative_workspace_switch_is_excused(wired, monkeypatch):
+    # 'workspace +1' emits the RESOLVED name ('4'), which never equals the
+    # literal '+1'; the sequence must recognize its own switch and not stop
+    monkeypatch.setattr(srv.hyprctl, "query", lambda cmd: {"name": "4"})
+    _stream(monkeypatch, [[("workspace", {"name": "4"})]])
+    steps = [
+        {"op": "hypr", "action": "workspace", "workspace": "+1"},
+        {"op": "pointer", "action": "click", "x": 5, "y": 5},
+    ]
+    out = srv.sequence(steps, then="none")
+    assert [s["op"] for s in wired] == ["hypr", "pointer"]
+    assert "all 2/2" in _head(out)
 
 
 def test_move_window_expected_by_address(wired, monkeypatch):
@@ -126,14 +153,45 @@ def test_move_window_expected_by_address(wired, monkeypatch):
 def test_click_then_wait_is_not_aborted(wired, monkeypatch):
     # click a launcher (opens a window), then wait_for that window: the
     # openwindow is what the next step waits for, not an unexpected change
-    _stream(monkeypatch, [[("openwindow", {"address": "0xnew"})]])
+    stream = _stream(monkeypatch, [[("openwindow", {"address": "0xnew"})]])
     steps = [
         {"op": "pointer", "action": "click", "x": 1, "y": 2},
         {"op": "wait_for", "event": "window_open"},
     ]
     out = srv.sequence(steps, then="none")
-    assert [s["op"] for s in wired] == ["pointer", "wait_for"]  # both ran
+    assert [s["op"] for s in wired] == ["pointer"]  # wait ran on the stream
     assert "all 2/2" in _head(out)
+    # the wait was satisfied by the event the settle-drain consumed: a fast
+    # app must not turn the documented click-then-wait pattern into a timeout
+    assert "0xnew" in _head(out) and "timeout" not in _head(out)
+    assert stream.wait_calls == []  # never had to block: backlog had it
+
+
+def test_wait_step_blocks_on_the_sequence_stream(wired, monkeypatch):
+    # nothing drained yet: the wait must listen on the SAME connection the
+    # sequence already holds, not open a fresh one that missed history
+    stream = _stream(
+        monkeypatch, [[]], waits=[("openwindow", {"address": "0xk", "class": "kitty"})]
+    )
+    steps = [
+        {"op": "pointer", "action": "click", "x": 1, "y": 2},
+        {"op": "wait_for", "event": "window_open", "match": "kitty"},
+    ]
+    out = srv.sequence(steps, then="none")
+    assert "all 2/2" in _head(out) and "0xk" in _head(out)
+    assert len(stream.wait_calls) == 1 and stream.wait_calls[0][0] == {"openwindow"}
+
+
+def test_wait_step_match_filters_backlog(wired, monkeypatch):
+    # a drained event that does NOT match the filter is not consumed as a hit
+    stream = _stream(monkeypatch, [[("openwindow", {"address": "0xa", "class": "sidebar"})]])
+    steps = [
+        {"op": "pointer", "action": "click", "x": 1, "y": 2},
+        {"op": "wait_for", "event": "window_open", "match": "kitty", "timeout_s": 1},
+    ]
+    out = srv.sequence(steps, then="none")
+    assert "timeout" in _head(out)  # sidebar was not the awaited kitty
+    assert len(stream.wait_calls) == 1  # it went on to block for the real one
 
 
 def test_final_drain_reports_last_step_change(wired, monkeypatch):
@@ -202,19 +260,13 @@ def test_time_budget_stops_before_a_late_step(wired, monkeypatch):
 def test_wait_for_timeout_clamped_to_budget(monkeypatch):
     monkeypatch.setattr(srv.safety, "touch", lambda *a: None)
     monkeypatch.setattr(srv.hyprctl, "snapshot", lambda: {})
-    _stream(monkeypatch, [])
+    stream = _stream(monkeypatch, [])
     # 25s already elapsed of a 30s budget -> a 60s wait must clamp to ~5s
     ticks = iter([0.0, 25.0, 25.0])
     monkeypatch.setattr(srv.time, "monotonic", lambda: next(ticks))
-    seen = {}
-
-    def capture(step):
-        seen.update(step)
-        return "ok"
-
-    monkeypatch.setattr(srv, "_dispatch_step", capture)
     srv.sequence([{"op": "wait_for", "event": "window_open", "timeout_s": 60}], then="none")
-    assert seen["timeout_s"] == pytest.approx(5.0)
+    assert len(stream.wait_calls) == 1
+    assert stream.wait_calls[0][1] == pytest.approx(5.0)
 
 
 def test_real_dispatch_wiring(monkeypatch):
