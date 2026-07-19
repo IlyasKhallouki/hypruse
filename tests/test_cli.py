@@ -122,6 +122,16 @@ def test_stop_signals_beacon_pid(tmp_path, monkeypatch, capsys):
     assert "stopped hypruse (pid 4242)" in capsys.readouterr().out
 
 
+def test_stop_handles_non_dict_beacon(tmp_path, monkeypatch, capsys):
+    # valid JSON that is not an object must not crash the emergency stop
+    monkeypatch.setenv("XDG_RUNTIME_DIR", str(tmp_path))
+    d = tmp_path / "hypruse"
+    d.mkdir()
+    (d / "state.json").write_text("[1, 2, 3]")
+    assert cli.stop() == 1
+    assert "unreadable" in capsys.readouterr().out
+
+
 def test_stop_clears_stale_beacon(tmp_path, monkeypatch, capsys):
     monkeypatch.setenv("XDG_RUNTIME_DIR", str(tmp_path))
     d = tmp_path / "hypruse"

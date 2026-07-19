@@ -57,33 +57,92 @@ def test_malformed_confine_fails_closed(monkeypatch):
         trust.guard_client(client())
 
 
-def test_guard_point_refuses_over_out_of_scope_window(monkeypatch):
+def _batch(monkeypatch, monitors, windows):
+    monkeypatch.setattr(trust.hyprctl, "batch_query", lambda cmds: [monitors, windows])
+
+
+MON = [{"name": "m", "x": 0, "y": 0, "width": 1920, "height": 1080,
+        "scale": 1.0, "activeWorkspace": {"id": 1}}]
+
+
+def test_guard_pointer_refuses_over_out_of_scope_window(monkeypatch):
     monkeypatch.setenv("HYPRUSE_CONFINE", "class:kitty")
-    monitors = [{"name": "m", "x": 0, "y": 0, "width": 1920, "height": 1080,
-                 "scale": 1.0, "activeWorkspace": {"id": 1}}]
+    monkeypatch.setenv("HYPRUSE_AUTH_GUARD", "0")
     windows = [
         client(addr="0xk", cls="kitty"),
         {"address": "0xbank", "class": "firefox", "at": [50, 50], "size": [200, 200],
          "workspace": {"id": 1}, "mapped": True},
     ]
-    monkeypatch.setattr(
-        trust.hyprctl, "query", lambda cmd: monitors if cmd == "monitors" else windows
-    )
-    # (10,10) is only over the in-scope kitty
-    trust.guard_point(10, 10)
+    _batch(monkeypatch, MON, windows)
+    trust.guard_pointer(10, 10)  # only over the in-scope kitty
     # (60,60) is over the out-of-scope firefox (and kitty): fail closed, z-order unknown
     with pytest.raises(trust.TrustError, match="outside the confinement"):
-        trust.guard_point(60, 60)
+        trust.guard_pointer(60, 60)
 
 
-def test_guard_point_over_empty_space_allowed(monkeypatch):
+def test_guard_pointer_over_empty_space_allowed(monkeypatch):
     monkeypatch.setenv("HYPRUSE_CONFINE", "class:kitty")
-    monitors = [{"name": "m", "x": 0, "y": 0, "width": 1920, "height": 1080,
-                 "scale": 1.0, "activeWorkspace": {"id": 1}}]
-    monkeypatch.setattr(
-        trust.hyprctl, "query", lambda cmd: monitors if cmd == "monitors" else []
-    )
-    trust.guard_point(500, 500)  # no window there, nothing confined is touched
+    monkeypatch.setenv("HYPRUSE_AUTH_GUARD", "0")
+    _batch(monkeypatch, MON, [])
+    trust.guard_pointer(500, 500)  # no window there, nothing confined is touched
+
+
+def test_guard_pointer_includes_special_workspace(monkeypatch):
+    # a scratchpad password manager pulled up as a special workspace is
+    # visibly on top; its (negative) ws id is not activeWorkspace, so the
+    # coverage check must add specialWorkspace to the visible set
+    monkeypatch.setenv("HYPRUSE_CONFINE", "class:kitty")
+    monkeypatch.setenv("HYPRUSE_AUTH_GUARD", "0")
+    monitors = [{"name": "m", "activeWorkspace": {"id": 1},
+                 "specialWorkspace": {"id": -99}}]
+    windows = [
+        {"address": "0xvault", "class": "keepassxc", "at": [40, 40], "size": [300, 300],
+         "workspace": {"id": -99}, "mapped": True},
+    ]
+    _batch(monkeypatch, monitors, windows)
+    with pytest.raises(trust.TrustError, match="outside the confinement"):
+        trust.guard_pointer(50, 50)  # over the scratchpad vault, must be refused
+
+
+def test_guard_pointer_coordinate_less_uses_cursor(monkeypatch):
+    # a click with no x/y lands at the current cursor; the guard must
+    # resolve and check THAT point, not skip
+    monkeypatch.setenv("HYPRUSE_CONFINE", "class:kitty")
+    monkeypatch.setenv("HYPRUSE_AUTH_GUARD", "0")
+    windows = [{"address": "0xother", "class": "firefox", "at": [0, 0], "size": [100, 100],
+                "workspace": {"id": 1}, "mapped": True}]
+    _batch(monkeypatch, MON, windows)
+    monkeypatch.setattr(trust.hyprctl, "cursor_pos", lambda: (50, 50))
+    with pytest.raises(trust.TrustError, match="outside the confinement"):
+        trust.guard_pointer(None, None)
+
+
+def test_guard_pointer_auth_over_polkit(monkeypatch):
+    # default auth guard: a click over a polkit dialog is refused even with
+    # no confinement configured
+    windows = [{"address": "0xpk", "class": "hyprpolkitagent", "at": [0, 0],
+                "size": [400, 200], "workspace": {"id": 1}, "mapped": True}]
+    _batch(monkeypatch, MON, windows)
+    with pytest.raises(trust.TrustError, match="authentication dialog"):
+        trust.guard_pointer(10, 10)
+    trust.guard_pointer(10, 10, allow_auth=True)  # override works
+
+
+def test_guard_pointer_no_query_when_all_off(monkeypatch):
+    monkeypatch.setenv("HYPRUSE_AUTH_GUARD", "0")
+
+    def boom(cmds):
+        raise AssertionError("must not query when no guard is active")
+
+    monkeypatch.setattr(trust.hyprctl, "batch_query", boom)
+    trust.guard_pointer(10, 10)  # confinement off + auth off: no query
+
+
+def test_use_bind_refused_under_confinement(monkeypatch):
+    trust.guard_use_bind()  # no confinement: allowed
+    monkeypatch.setenv("HYPRUSE_CONFINE", "class:kitty")
+    with pytest.raises(trust.TrustError, match="cannot be confined"):
+        trust.guard_use_bind()
 
 
 # --- auth interlock ---------------------------------------------------------

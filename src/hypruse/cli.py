@@ -217,8 +217,8 @@ def stop() -> int:
         print("no active hypruse session (no beacon found)")
         return 0
     try:
-        pid = int(json.loads(path.read_text()).get("pid"))
-    except (json.JSONDecodeError, TypeError, ValueError):
+        pid = int(json.loads(path.read_text())["pid"])
+    except (json.JSONDecodeError, TypeError, ValueError, KeyError, AttributeError):
         print(f"beacon at {path} is unreadable; run: pkill -f hypruse")
         return 1
     try:

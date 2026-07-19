@@ -456,6 +456,7 @@ def pointer(
     scroll_dx: float = 0,
     double: bool = False,
     then: str = "none",
+    allow_auth: bool = False,
 ) -> list[Any] | str:
     """Mouse in global coordinates. action='move' (x,y) | 'click' (optional
     x,y first; button left/right/middle; double=true) | 'drag' (x,y →
@@ -463,22 +464,27 @@ def pointer(
     content down; optional x,y first). `then` appends the result to this
     call so you skip a round-trip: 'desktop' a fresh snapshot, 'screenshot'
     a stable capture, 'ui' the focused window's elements with current
-    values, 'none' (default) nothing."""
+    values, 'none' (default) nothing. `allow_auth=true` overrides the
+    refusal to click over a system authentication dialog."""
     safety.touch(f"pointer:{action}")
     trust.guard_seat()
-    trust.guard_point(x, y)  # confinement: refuse over an out-of-scope window
     if action == "move":
+        # a move only repositions the cursor; the input-delivering actions
+        # below are the ones the confinement and auth guards gate
         if x is None or y is None:
             raise ValueError("move needs x and y")
         hinput.move(x, y)
     elif action == "click":
+        trust.guard_pointer(x, y, allow_auth)  # None x/y = click at current cursor
         hinput.click(x, y, button=button, double=double)
     elif action == "drag":
         if None in (x, y, to_x, to_y):
             raise ValueError("drag needs x, y, to_x, to_y")
-        trust.guard_point(to_x, to_y)  # the drag ends elsewhere; confine that too
+        trust.guard_pointer(x, y, allow_auth)
+        trust.guard_pointer(to_x, to_y, allow_auth)  # the drag ends elsewhere; guard that too
         hinput.drag(x, y, to_x, to_y, button=button)  # type: ignore[arg-type]
     elif action == "scroll":
+        trust.guard_pointer(x, y, allow_auth)  # None x/y = scroll at current cursor
         hinput.scroll(dy=scroll_dy, dx=scroll_dx, x=x, y=y)
     else:
         raise ValueError(f"unknown action {action!r}: move|click|drag|scroll")
@@ -629,9 +635,15 @@ def hypr(action: str, target: str = "", workspace: str = "", then: str = "none")
     'toggle_floating' (target?). `then` ('desktop'|'screenshot'|'ui'|'none')
     appends the result to this call."""
     safety.touch(f"hypr:{action}")
-    # confinement: any action naming a specific window must stay in scope
+    # confinement: any action naming a specific window must stay in scope;
+    # fullscreen/toggle_floating with no target hit the ACTIVE window, so
+    # resolve and guard that too
     if target and action != "workspace":
         trust.guard_window(target)
+    elif not target and action in ("fullscreen", "toggle_floating"):
+        active = _active_client()
+        if active is not None:
+            trust.guard_client(active)
     if action == "workspace":
         if not workspace:
             raise ValueError("workspace action needs `workspace`")
@@ -662,6 +674,7 @@ def hypr(action: str, target: str = "", workspace: str = "", then: str = "none")
             f"unknown action {action!r}: workspace|focus_window|move_window|"
             "close_window|fullscreen|toggle_floating"
         )
+    trust.remember_seat()  # our own focus/workspace change re-baselines the seat
     return _acted(msg, then)
 
 
@@ -723,6 +736,7 @@ def launch(command: str, workspace: str = "", wait_s: float = 8.0) -> dict[str, 
             "desktop() to find the window, then hypr move_window if needed"
         )
     trust.note_launched(win["address"])  # owned-set for `launched` confinement + border
+    trust.remember_seat()  # the new window took focus; re-baseline for the seat guard
     ws = win.get("workspace", {})
     result: dict[str, Any] = {
         "address": win["address"],
@@ -795,13 +809,18 @@ def use_bind(combo: str, then: str = "none") -> list[Any] | str:
     (the only reliable way: synthetic keypresses do not trigger compositor
     binds). Use it to drive the owner's configured workflows: launchers,
     layout shortcuts, scratchpads. `then` ('desktop'|'screenshot'|'ui'|'none')
-    appends the result to this call (handy after a launcher bind)."""
+    appends the result to this call (handy after a launcher bind). Refused
+    while HYPRUSE_CONFINE is set: a bind runs an arbitrary compositor action
+    that cannot be scoped to a window."""
     safety.touch("use_bind")
+    trust.guard_seat()
+    trust.guard_use_bind()  # an arbitrary compositor action escapes confinement
     bind = hyprctl.find_bind(combo)
     if bind is None:
         raise ValueError(f"no keybind {combo!r}; call binds() for the exact combos")
     action, arg = bind["action"], bind.get("arg", "")
     hyprctl.dispatch(action, *([arg] if arg else []))
+    trust.remember_seat()  # the bind may have moved focus/workspace on our behalf
     return _acted(f"ran {bind['combo']}: {action} {arg}".rstrip(), then)
 
 
