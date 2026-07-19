@@ -6,6 +6,8 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.9.0] - 2026-07-19
+
 ### Added
 - Optional confinement and trust layers (`src/hypruse/trust.py`), each an
   opt-in env flag that fails toward less action and composes with the
