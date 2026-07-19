@@ -25,6 +25,7 @@ import json
 import os
 import re
 import signal
+import threading
 import time
 from collections.abc import Callable
 from pathlib import Path
@@ -32,6 +33,7 @@ from pathlib import Path
 _state_path: Path | None = None
 _started: float = 0.0
 _cleanups: list[Callable[[], None]] = []
+_write_lock = threading.Lock()  # concurrent tool calls share one tmp file
 
 # last_action is interpolated from tool arguments BEFORE they are
 # validated, and beacon consumers (the Waybar module) re-embed it in
@@ -50,9 +52,10 @@ def state_path() -> Path:
 def _write(payload: dict) -> None:
     if _state_path is None:
         return
-    tmp = _state_path.with_suffix(".tmp")
-    tmp.write_text(json.dumps(payload))
-    tmp.replace(_state_path)
+    with _write_lock:
+        tmp = _state_path.with_suffix(".tmp")
+        tmp.write_text(json.dumps(payload))
+        tmp.replace(_state_path)
 
 
 def init() -> None:

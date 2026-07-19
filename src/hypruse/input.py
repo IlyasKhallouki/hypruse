@@ -16,6 +16,7 @@ from __future__ import annotations
 import contextlib
 import shutil
 import subprocess
+import threading
 import time
 from collections.abc import Callable
 from typing import Any
@@ -114,14 +115,26 @@ def _wtype(args: list[str], stdin: str | None = None) -> None:
         raise InputError(f"wtype failed: {proc.stderr.strip()}")
 
 
+# There is ONE seat. MCP hosts can issue tool calls in parallel and the
+# sync tool functions run on worker threads, so without serialization two
+# overlapping calls could interleave a drag's press/move/release with
+# another click's, or type into each other's focus. Reentrant because a
+# locked drag calls the locked move for its path. The SIGTERM cleanup
+# (release_held) deliberately does NOT take it: the handler can interrupt
+# a holder on the same thread, and a dying process must not deadlock.
+_seat_lock = threading.RLock()
+
+
 def type_text(text: str) -> None:
     if text:
-        _wtype(["-"], stdin=text)  # '-' reads stdin: safe for any content
+        with _seat_lock:
+            _wtype(["-"], stdin=text)  # '-' reads stdin: safe for any content
 
 
 def key_combo(combo: str) -> None:
     mods, key = parse_combo(combo)
-    _wtype(combo_to_wtype_args(mods, key))
+    with _seat_lock:
+        _wtype(combo_to_wtype_args(mods, key))
 
 
 # --- pointer ----------------------------------------------------------------
@@ -170,7 +183,8 @@ def _check_xy(x: float | None, y: float | None) -> bool:
 
 
 def move(x: float, y: float) -> None:
-    hyprctl.dispatch("movecursor", str(int(round(x))), str(int(round(y))))
+    with _seat_lock:
+        hyprctl.dispatch("movecursor", str(int(round(x))), str(int(round(y))))
 
 
 def click(
@@ -180,16 +194,16 @@ def click(
     double: bool = False,
 ) -> None:
     _check_button(button)
-    if _check_xy(x, y):
-        move(x, y)  # type: ignore[arg-type]
-        time.sleep(0.02)
-    _with_pointer(lambda p: p.click(button, double=double))
+    has_xy = _check_xy(x, y)
+    with _seat_lock:
+        if has_xy:
+            move(x, y)  # type: ignore[arg-type]
+            time.sleep(0.02)
+        _with_pointer(lambda p: p.click(button, double=double))
 
 
 def drag(x1: float, y1: float, x2: float, y2: float, button: str = "left") -> None:
     _check_button(button)
-    move(x1, y1)
-    time.sleep(0.03)
 
     def run(p: VirtualPointer) -> None:
         global _held_button
@@ -204,7 +218,10 @@ def drag(x1: float, y1: float, x2: float, y2: float, button: str = "left") -> No
             p.button(button, RELEASED)
             _held_button = None
 
-    _with_pointer(run)
+    with _seat_lock:
+        move(x1, y1)
+        time.sleep(0.03)
+        _with_pointer(run)
 
 
 def scroll(
@@ -212,7 +229,9 @@ def scroll(
 ) -> None:
     if not dy and not dx:
         raise InputError("scroll needs a non-zero dy or dx")
-    if _check_xy(x, y):
-        move(x, y)  # type: ignore[arg-type]
-        time.sleep(0.02)
-    _with_pointer(lambda p: p.scroll(dy=dy, dx=dx))
+    has_xy = _check_xy(x, y)
+    with _seat_lock:
+        if has_xy:
+            move(x, y)  # type: ignore[arg-type]
+            time.sleep(0.02)
+        _with_pointer(lambda p: p.scroll(dy=dy, dx=dx))

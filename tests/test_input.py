@@ -64,6 +64,26 @@ def test_drag_tracks_and_clears_held_button(monkeypatch):
     assert hinput._held_button is None
 
 
+def test_concurrent_drags_never_interleave(monkeypatch):
+    # MCP hosts can issue tool calls in parallel and sync tools run on
+    # worker threads: the seat lock must keep each drag's press/move/release
+    # atomic on the shared virtual pointer
+    import threading
+
+    from hypruse.wire import PRESSED, RELEASED
+
+    vp = FakeVP()
+    monkeypatch.setattr(hinput, "_vp", vp)
+    monkeypatch.setattr(hinput.hyprctl, "dispatch", lambda *a: None)
+    monkeypatch.setattr(hinput.time, "sleep", lambda s: None)
+    threads = [threading.Thread(target=lambda: hinput.drag(0, 0, 5, 5)) for _ in range(4)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+    assert [s for _, s in vp.events] == [PRESSED, RELEASED] * 4
+
+
 def test_release_held_releases_mid_drag_state(monkeypatch):
     # the state a SIGTERM would see if it lands between press and release
     from hypruse.wire import RELEASED
