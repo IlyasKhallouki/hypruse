@@ -7,7 +7,7 @@ Ten-minute orientation for contributors.
 ```
 src/hypruse/
   cli.py         entry point: server by default, doctor / init subcommands
-  server.py      MCP wiring: 13 tools (clipboard is opt-in), docstrings =
+  server.py      MCP wiring: 15 tools (clipboard is opt-in), docstrings =
                  the agent-facing API
   hyprctl.py     all Hyprland IPC (queries + dispatchers), state trimming,
                  keybind decoding
