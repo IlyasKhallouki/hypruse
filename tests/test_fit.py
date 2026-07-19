@@ -125,14 +125,16 @@ def test_capture_folds_applied_scale_into_meta(monkeypatch):
             ]
         }[cmd],
     )
-    # every full-res jpeg quality rung is over budget, so it falls to 0.75 scale
+    # every full-res jpeg quality rung is over budget, so it falls to the
+    # 0.75-of-native rung; grim's -s is ABSOLUTE, so the flag value is
+    # base_scale * 0.75 and the image is logical(1536x864) * 0.9375
     fake = FakeGrim(
         {
             ("jpeg", 90, None): 2_000_000,
             ("jpeg", 75, None): 1_500_000,
             ("jpeg", 60, None): 1_100_000,
             ("jpeg", 45, None): 900_000,
-            ("jpeg", 45, "0.75"): 400_000,
+            ("jpeg", 45, "0.9375"): 400_000,
         }
     )
     monkeypatch.setattr(screenshot, "_grim", fake)
@@ -141,6 +143,57 @@ def test_capture_folds_applied_scale_into_meta(monkeypatch):
     assert meta["format"] == "jpeg"
     assert meta["scale"] == pytest.approx(1.25 * 0.75)
     assert meta["image"] == [1440, 810]
+    # the round trip the metadata promises: image right edge -> logical width
+    assert 1440 / meta["scale"] == pytest.approx(1920 / 1.25)
+
+
+def test_hidpi_max_edge_cap_passes_absolute_scale_to_grim(monkeypatch):
+    # 4K @ 2.0 (logical 1920x1080), image-mode edge cap 1920: the fraction
+    # of native is 0.5, but grim needs the ABSOLUTE factor 2.0*0.5 = 1.
+    # Passing the bare 0.5 (the old bug) would return a 960px-wide image
+    # while metadata claimed scale 1.0, halving every mapped coordinate.
+    monkeypatch.setattr(
+        screenshot.hyprctl,
+        "query",
+        lambda cmd: {
+            "monitors": [
+                {"name": "DP-1", "x": 0, "y": 0, "width": 3840, "height": 2160,
+                 "scale": 2.0, "focused": True}
+            ]
+        }[cmd],
+    )
+    fake = FakeGrim({("jpeg", 90, "1"): 300_000})
+    monkeypatch.setattr(screenshot, "_grim", fake)
+    monkeypatch.setattr(screenshot, "image_size", lambda data: (1920, 1080))
+    _, meta = screenshot.capture(max_bytes=700_000, max_edge=1920)
+    assert fake.calls == [("jpeg", 90, "1")]
+    assert meta["scale"] == pytest.approx(1.0)
+    assert meta["image"] == [1920, 1080]
+    # right edge of the image maps to the monitor's logical right edge
+    assert meta["geometry"][0] + 1920 / meta["scale"] == pytest.approx(1920)
+
+
+def test_cross_seam_region_reports_grims_actual_scale(monkeypatch):
+    # region straddling a 1.0/2.0 seam, top-left on the 1.0 side: grim
+    # renders it at 2x (max intersected output scale), so meta scale must
+    # be 2.0 even though no -s was passed (file mode, no caps)
+    monkeypatch.setattr(
+        screenshot.hyprctl,
+        "query",
+        lambda cmd: {
+            "monitors": [
+                {"name": "a", "x": 0, "y": 0, "width": 1920, "height": 1080, "scale": 1.0},
+                {"name": "b", "x": 1920, "y": 0, "width": 3840, "height": 2160, "scale": 2.0},
+            ]
+        }[cmd],
+    )
+    fake = FakeGrim({("jpeg", 90, None): 100_000})
+    monkeypatch.setattr(screenshot, "_grim", fake)
+    monkeypatch.setattr(screenshot, "image_size", lambda data: (400, 200))
+    _, meta = screenshot.capture(region="1900,0,200x100")
+    assert fake.calls == [("jpeg", 90, None)]  # no -s: grim default applies
+    assert meta["scale"] == pytest.approx(2.0)
+    assert meta["image"] == [400, 200]  # logical 200x100 rendered at 2x
 
 
 def test_capture_rejects_bad_scale():

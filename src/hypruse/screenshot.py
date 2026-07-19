@@ -118,13 +118,24 @@ def _fit_ladder(start_scale: float, lossless: bool = False) -> list[tuple[str, i
 
 
 def _grab_fitting(
-    base_args: list[str], start_scale: float, max_bytes: int | None, lossless: bool = False
+    base_args: list[str],
+    start_scale: float,
+    max_bytes: int | None,
+    lossless: bool = False,
+    base_scale: float = 1.0,
 ) -> tuple[bytes, str, float]:
-    """Capture within a byte budget; returns (data, format, applied_scale)."""
+    """Capture within a byte budget; returns (data, format, applied_scale).
+
+    `start_scale` and the returned applied scale are fractions of the
+    capture's NATIVE pixels, but grim's `-s` flag is an ABSOLUTE
+    logical-to-pixel factor (grim's default equals the output scale, so
+    image = logical_size * factor). The flag therefore carries
+    base_scale * s; passing the bare fraction would shrink the image by
+    base_scale twice on any scaled monitor and desync the metadata."""
     for fmt, quality, s in _fit_ladder(start_scale, lossless):
         args = list(base_args)
         if abs(s - 1.0) > 1e-6:
-            args = ["-s", f"{s:g}", *args]
+            args = ["-s", f"{base_scale * s:g}", *args]
         if fmt == "jpeg":
             args = ["-t", "jpeg", "-q", str(quality), *args]
         data = _grim(args)
@@ -180,9 +191,23 @@ def _cap_scale(physical_long_edge: float, max_edge: int | None) -> float:
     return max_edge / physical_long_edge
 
 
-def _scale_at(x: int, y: int, monitors: list[dict[str, Any]]) -> float:
-    m = hyprctl.monitor_at(monitors, x, y)
-    return float(m.get("scale", 1.0)) if m else 1.0
+def _rect_intersects(a: tuple[int, int, int, int], b: tuple[int, int, int, int]) -> bool:
+    ax, ay, aw, ah = a
+    bx, by, bw, bh = b
+    return ax < bx + bw and bx < ax + aw and ay < by + bh and by < ay + ah
+
+
+def _scale_for_rect(x: int, y: int, w: int, h: int, monitors: list[dict[str, Any]]) -> float:
+    """The buffer scale grim renders a `-g` rect at: the GREATEST scale
+    among the outputs the rect intersects. Using the scale under one corner
+    would misreport any capture straddling a seam between differently
+    scaled monitors, doubling (or scaling) every mapped coordinate."""
+    scales = [
+        float(m.get("scale", 1.0))
+        for m in monitors
+        if _rect_intersects(hyprctl.logical_rect(m), (x, y, w, h))
+    ]
+    return max(scales, default=1.0)
 
 
 def _find_window(window: str, clients: list[dict[str, Any]], active: str | None) -> dict[str, Any]:
@@ -224,7 +249,7 @@ def capture(
         x, y, w, h = parse_region(region)
         base = ["-g", f"{x},{y} {w}x{h}"]
         meta: dict[str, Any] = {"target": "region", "geometry": [x, y, w, h]}
-        base_scale = _scale_at(x, y, monitors)
+        base_scale = _scale_for_rect(x, y, w, h, monitors)
         physical_long = max(w, h) * base_scale
     elif window:
         active = (hyprctl.query("activewindow") or {}).get("address")
@@ -237,7 +262,7 @@ def capture(
             "class": c.get("class", ""),
             "geometry": [x, y, w, h],
         }
-        base_scale = _scale_at(x, y, monitors)
+        base_scale = _scale_for_rect(x, y, w, h, monitors)
         physical_long = max(w, h) * base_scale
     else:
         m = next((m for m in monitors if m.get("focused")), monitors[0])
@@ -254,7 +279,7 @@ def capture(
 
     # explicit scale wins; otherwise fit the long edge to keep the mapping honest
     start_scale = scale or _cap_scale(physical_long, max_edge)
-    data, fmt, applied = _grab_fitting(base, start_scale, max_bytes, lossless)
+    data, fmt, applied = _grab_fitting(base, start_scale, max_bytes, lossless, base_scale)
     iw, ih = image_size(data)
     meta["image"] = [iw, ih]
     meta["format"] = fmt

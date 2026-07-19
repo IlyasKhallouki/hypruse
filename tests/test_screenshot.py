@@ -22,20 +22,32 @@ MONITORS = [
 
 
 def test_scale_lookup_per_monitor():
-    assert screenshot._scale_at(500, 500, MONITORS) == 1.0
-    assert screenshot._scale_at(2000, 100, MONITORS) == 1.25
-    assert screenshot._scale_at(99999, 0, MONITORS) == 1.0  # off-layout → neutral
+    assert screenshot._scale_for_rect(500, 500, 10, 10, MONITORS) == 1.0
+    assert screenshot._scale_for_rect(2000, 100, 10, 10, MONITORS) == 1.25
+    assert screenshot._scale_for_rect(99999, 0, 10, 10, MONITORS) == 1.0  # off-layout → neutral
 
 
 def test_scale_lookup_uses_logical_bounds():
     # HiDPI 2880x1800 @ 1.5 ends logically at x=1920, where the FHD begins:
-    # a point on the FHD must not be claimed via the HiDPI's mode width
+    # a rect on the FHD must not be claimed via the HiDPI's mode width
     seam = [
         {"name": "eDP-1", "x": 0, "y": 0, "width": 2880, "height": 1800, "scale": 1.5},
         {"name": "DP-1", "x": 1920, "y": 0, "width": 1920, "height": 1080, "scale": 1.0},
     ]
-    assert screenshot._scale_at(2500, 500, seam) == 1.0
-    assert screenshot._scale_at(1900, 500, seam) == 1.5
+    assert screenshot._scale_for_rect(2500, 500, 10, 10, seam) == 1.0
+    assert screenshot._scale_for_rect(1900, 500, 10, 10, seam) == 1.5
+
+
+def test_scale_for_rect_cross_seam_takes_max():
+    # grim renders a -g rect at the GREATEST scale among intersected
+    # outputs, so a rect straddling a 1.0/2.0 seam maps at 2.0 even though
+    # its top-left corner sits on the 1.0 monitor
+    seam = [
+        {"name": "a", "x": 0, "y": 0, "width": 1920, "height": 1080, "scale": 1.0},
+        {"name": "b", "x": 1920, "y": 0, "width": 3840, "height": 2160, "scale": 2.0},
+    ]
+    assert screenshot._scale_for_rect(1800, 100, 300, 100, seam) == 2.0
+    assert screenshot._scale_for_rect(100, 100, 300, 100, seam) == 1.0  # fully on 1.0
 
 
 def test_find_window_active_and_missing():
