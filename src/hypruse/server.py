@@ -33,20 +33,26 @@ INSTRUCTIONS = """\
 hypruse controls a live Hyprland desktop. Workflow: call `desktop` first
 and prefer `hypr`/`launch` (IPC, instant and exact) for anything window-
 or workspace-shaped; use `screenshot` + `pointer`/`keyboard` only to see
-and operate inside application windows. To CLICK a named control inside an
-app, try `ui` FIRST: for GTK/Qt apps it returns the control's exact
-coordinates from the accessibility tree with no image at all, which is
-both cheaper and more precise than estimating a pixel. Use screenshot +
-zoom when `ui` returns nothing, when you need to READ the screen (`ui`
-gives labels, not rendered values), or for canvas-like UIs. To
+and operate inside application windows. Launchers, bars, notification
+popups, and lock screens are not windows: `desktop` reports them under
+`layers`. To CLICK a named control inside an app, call `click_ui` FIRST:
+for GTK/Qt apps it resolves the control in the accessibility tree and
+clicks it in ONE call, no image and no pixel estimation (`ui` lists the
+controls and their current values without clicking; `marks` returns a
+numbered screenshot plus legend when you want to SEE what is clickable,
+then `click_ui(mark=N)`). Use screenshot + zoom when the tree exposes
+nothing (terminals, canvas UIs, Electron/Chrome without a flag). To
 verify an effect without a second round-trip, pass `then='desktop'` (a
-fresh snapshot) or `then='screenshot'` to the acting call itself instead
-of calling `desktop` again. `binds` lists the owner's own keybinds; to run one, call
+fresh snapshot), `then='ui'` (the focused window's controls with current
+values, cheapest after typing or toggling), or `then='screenshot'` to
+the acting call itself instead of calling `desktop` again. `binds` lists
+the owner's own keybinds; to run one, call
 `use_bind` with its combo (synthetic keypresses do NOT trigger compositor
 binds, so `keyboard` is only for shortcuts the focused app handles). After
 actions with delayed effects, block on `wait_for` (window_open,
-title_change) instead of sleeping. To run several actions at once (click,
-type, press enter, wait), pass them to `sequence` as one call: it stops if
+title_change, layer_open) instead of sleeping. To run several actions at
+once (click, type, press enter, wait), pass them to `sequence` as one
+call: it stops if
 the desktop changes structurally between steps, so you spend one
 round-trip instead of one per step. It does not catch a bare focus change,
 so give a keyboard step a window= address when typing matters.

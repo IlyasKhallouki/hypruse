@@ -8,7 +8,8 @@ arch=('any')
 url="https://github.com/IlyasKhallouki/hypruse"
 license=('MIT')
 depends=('python' 'python-mcp' 'hyprland' 'grim' 'wtype')
-optdepends=('wl-clipboard: opt-in clipboard tool (HYPRUSE_CLIPBOARD=1)')
+optdepends=('wl-clipboard: opt-in clipboard tool (HYPRUSE_CLIPBOARD=1)'
+            'imagemagick: numbered Set-of-Marks captures (marks tool)')
 makedepends=('git' 'python-build' 'python-installer' 'python-wheel' 'python-hatchling')
 provides=('hypruse')
 conflicts=('hypruse')

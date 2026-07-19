@@ -6,6 +6,44 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Added
+- `desktop` reports layer-shell surfaces: launchers (wofi/rofi), bars,
+  notification popups, and lock screens are not windows and were
+  previously invisible to the semantic snapshot. They appear under
+  `layers` with namespace, a best-effort `kind` (prefix heuristic that
+  degrades to `unknown`), level, monitor, and global geometry, from the
+  same single batched hyprctl call.
+- `wait_for` gains `layer_open` / `layer_close` (match on the layer
+  namespace, e.g. waiting for a launcher to appear), `urgent` (a window
+  demands attention), and `screencast` (screen sharing started/stopped),
+  parsed from the matching socket2 events.
+- `sequence` treats a keyboard-grabbing layer surface (launcher, lock
+  screen, on-screen keyboard) appearing mid-run as a structural change
+  and stops; notification popups and bars are explicitly noise and do
+  not abort the run.
+- `then='ui'`: a fourth act-and-observe mode that appends the focused
+  window's accessible elements with their CURRENT values to the acting
+  call's own result. Reading the effect of typing or toggling costs a
+  few hundred exact tokens instead of a screenshot, and degrades to a
+  note when the app exposes no tree.
+- `marks` tool: Set-of-Marks capture, the window screenshot with every
+  accessible control drawn as a numbered mark plus a JSON legend (role,
+  name, current value, exact global click point per number). Drawing
+  shells out to ImageMagick (optional, same idiom as grim/wtype/busctl);
+  without it the exact legend still returns. Grounded in the set-of-mark
+  visual-prompting and OSWorld a11y+screenshot results already cited in
+  the README Research section.
+- `click_ui` tool: click a control by accessible NAME or by a `marks`
+  number in ONE call. The coordinate is resolved from the accessibility
+  tree, the window is focused first, and the click goes through the real
+  pointer path so it stays visible and inherits every safety guarantee
+  (beacon, panic kill, seat serialization); AT-SPI DoAction was
+  evaluated and rejected because invisible synthetic input would bypass
+  that layer. Exact name match beats substring, an ambiguous name
+  returns the candidate list instead of guessing, and mark offsets are
+  window-relative so a moved window stays clickable. Also available as a
+  `sequence` op.
+
 ## [0.7.1] - 2026-07-19
 
 ### Fixed

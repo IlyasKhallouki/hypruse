@@ -16,6 +16,7 @@ pkgbase = hypruse-git
 	depends = grim
 	depends = wtype
 	optdepends = wl-clipboard: opt-in clipboard tool (HYPRUSE_CLIPBOARD=1)
+	optdepends = imagemagick: numbered Set-of-Marks captures (marks tool)
 	provides = hypruse
 	conflicts = hypruse
 	source = git+https://github.com/IlyasKhallouki/hypruse.git

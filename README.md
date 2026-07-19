@@ -40,10 +40,12 @@ Design decisions:
 
 | tool | what it does |
 |---|---|
-| `desktop` | One-call semantic snapshot: monitors, workspaces, windows (address/class/title/geometry), active window, cursor |
+| `desktop` | One-call semantic snapshot: monitors, workspaces, windows (address/class/title/geometry), active window, cursor, and layer surfaces (launchers, bars, notification popups, lock screens) with a best-effort kind and geometry |
 | `screenshot` | Focused monitor, exact window crop by address, or `x,y,WxH` region; returns image + coordinate-mapping metadata; fast JPEG by default (`lossless=true` for PNG); `stable=true` waits for the frame to settle |
 | `zoom` | Native-resolution re-capture around an estimated point (optionally clamped to a window): the precision step before clicking small controls, same metadata contract |
 | `ui` | Read a window's accessibility tree (AT-SPI, GTK/Qt apps that expose one) and return clickable elements by name with exact global coordinates, no screenshot; reports current values too (typed text, slider position, checkbox state); falls back to vision when an app exposes nothing |
+| `marks` | Set-of-Marks capture: the window screenshot with every accessible control drawn as a numbered mark, plus a JSON legend (role, name, current value, exact click point per number); needs ImageMagick for the drawing, degrades to the legend alone without it |
+| `click_ui` | Click a control by accessible NAME or by a `marks` number in one call: the coordinate comes from the tree, the click goes through the real pointer (visible, same safety guarantees); an ambiguous name returns the candidates instead of guessing |
 | `pointer` | move / click / drag / scroll (discrete wheel notches) in global coordinates |
 | `keyboard` | Type literal text (unicode-safe) or press combos (`ctrl+shift+t`, `super+enter`, `F5`); optional `window` address focuses the target first so keystrokes land in the right app |
 | `hypr` | Switch workspace, focus/move/close windows, fullscreen, floating (pure IPC, milliseconds) |
@@ -51,14 +53,14 @@ Design decisions:
 | `binds` | The user's own keybinds, decoded (`SUPER+Q`, action, description); the agent runs one with `use_bind` |
 | `use_bind` | Execute a keybind by combo (`SUPER+F`), running its bound action, so the agent drives the owner's own launchers and shortcuts |
 | `sequence` | Run an ordered list of actions (pointer/keyboard/hypr/wait_for) in one call; stops the moment the desktop changes in a way the current step did not expect, so a click/type/enter micro-sequence costs one round-trip instead of several |
-| `wait_for` | Block on real compositor events (window open/close, workspace change, title change) with a match filter and timeout; replaces sleep-and-hope in multi-step automations |
+| `wait_for` | Block on real compositor events (window open/close, workspace change, title change, layer surfaces appearing/closing, urgency, screen sharing on/off) with a match filter and timeout; replaces sleep-and-hope in multi-step automations |
 | `clipboard` | Read or write the text clipboard via `wl-clipboard`; opt-in, exists only with `HYPRUSE_CLIPBOARD=1` in the server env |
 
 The acting tools (`pointer`, `keyboard`, `hypr`, `use_bind`, `sequence`) take an optional `then` argument that appends the result to the same call, so the agent sees the effect without a second round-trip: `then='desktop'` adds a fresh semantic snapshot (~25 ms, cheap, best for window/focus changes), `then='screenshot'` a stable capture (best for visual changes), `then='none'` nothing (the default everywhere except `sequence`, which defaults to `'desktop'`).
 
 ## Install
 
-Requirements: Hyprland, `grim`, `wtype` (most Hyprland setups already have both), and [uv](https://docs.astral.sh/uv/). Optional: `wl-clipboard` for the opt-in clipboard tool.
+Requirements: Hyprland, `grim`, `wtype` (most Hyprland setups already have both), and [uv](https://docs.astral.sh/uv/). Optional: `wl-clipboard` for the opt-in clipboard tool, `imagemagick` for numbered `marks` captures.
 
 Arch Linux, from the [AUR](https://aur.archlinux.org/packages/hypruse):
 
