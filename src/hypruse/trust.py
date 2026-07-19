@@ -325,14 +325,19 @@ def guard_seat() -> None:
     """In strict mode, refuse to act when the cursor or focused window moved
     since hypruse's last action: something other than the agent (the human,
     or a popup) took the seat, and acting now could land in the wrong place.
-    Cannot attribute the change; it only reports that the world moved."""
+    Cannot attribute the change; it only reports that the world moved.
+    Fails closed: a seat that cannot be read cannot be proven still ours."""
     if not _strict_on() or _seat["cursor"] is None:
         return
     try:
         cursor = hyprctl.cursor_pos()
         active = (hyprctl.query("activewindow") or {}).get("address")
-    except Exception:
-        return
+    except Exception as exc:
+        raise TrustError(
+            f"cannot read the seat to check for contention ({exc}); refusing "
+            "to act while HYPRUSE_STRICT is set. Retry, or set HYPRUSE_STRICT=0 "
+            "to disable this guard."
+        ) from exc
     if cursor != _seat["cursor"] or active != _seat["active"]:
         raise TrustError(
             "the seat moved since hypruse last acted (cursor or focus changed "

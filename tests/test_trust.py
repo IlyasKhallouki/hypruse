@@ -231,6 +231,23 @@ def test_seat_guard_detects_drift(monkeypatch):
         trust.guard_seat()
 
 
+def test_seat_guard_fails_closed_when_seat_unreadable(monkeypatch):
+    # the module invariant is fail-toward-less-action: a seat that cannot
+    # be read cannot be proven still ours, so strict mode must refuse,
+    # not silently allow the action through
+    monkeypatch.setenv("HYPRUSE_STRICT", "1")
+    monkeypatch.setattr(trust.hyprctl, "cursor_pos", lambda: (10, 10))
+    monkeypatch.setattr(trust.hyprctl, "query", lambda cmd: {"address": "0xa"})
+    trust.remember_seat()
+
+    def boom():
+        raise trust.hyprctl.HyprctlError("hyprctl cursorpos timed out")
+
+    monkeypatch.setattr(trust.hyprctl, "cursor_pos", boom)
+    with pytest.raises(trust.TrustError, match="cannot read the seat"):
+        trust.guard_seat()
+
+
 # --- ownership marking ------------------------------------------------------
 
 

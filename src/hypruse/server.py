@@ -114,7 +114,12 @@ def desktop() -> dict[str, Any]:
     only there, with a best-effort `kind` and global geometry you can
     screenshot by region or click into. Call first; act on the addresses
     it returns."""
-    return hyprctl.snapshot()
+    snap = hyprctl.snapshot()
+    # under HYPRUSE_STRICT a seat that moved without hypruse blocks every
+    # acting tool until the agent re-observes; this read IS that
+    # re-observation, so it re-arms the guard (as its error advises)
+    trust.remember_seat()
+    return snap
 
 
 def _image_mode() -> bool:
@@ -175,6 +180,7 @@ def _deliver_capture(
     data, meta = _grab_env(window, region, scale=scale, stable=stable, lossless=lossless)
     meta.update(extra or {})
     trust.notify_capture()  # HYPRUSE_MARK: flash an on-screen notice, rate-limited
+    trust.remember_seat()  # a fresh capture re-arms the strict seat guard
     return _package(data, meta)
 
 
@@ -417,14 +423,15 @@ def marks(window: str = "", name: str = "") -> list[Any] | str:
 _OBSERVE_MODES = ("none", "desktop", "screenshot", "ui")
 
 
-def _acted(msg: str, then: str) -> list[Any] | str:
+def _acted(msg: str, then: str, window: str = "") -> list[Any] | str:
     """Fuse an action with its observation: append a fresh view of the
     result to the action's own tool result, so the agent sees the effect
     without spending a second round-trip. `then='desktop'` appends a
     semantic snapshot (~30 ms, a few hundred tokens, best for window/focus
     changes); `'screenshot'` appends a stable capture of the focused
-    monitor (best for visual changes); `'ui'` appends the focused window's
-    accessible elements with their CURRENT values (a few hundred exact
+    monitor (best for visual changes); `'ui'` appends the accessible
+    elements of `window` (the acted-on window when the caller knows it,
+    else the focused one) with their CURRENT values (a few hundred exact
     tokens instead of an image: best after typing or toggling in an app
     that exposes a tree, degrades to a note when it does not);
     `'none'` appends nothing."""
@@ -437,7 +444,7 @@ def _acted(msg: str, then: str) -> list[Any] | str:
         return [head, *_deliver_capture(stable=True)]
     if then == "ui":
         try:
-            view = _ui_read()
+            view = _ui_read(window)
         except Exception as exc:  # the observation must never mask the action's success
             view = f"ui read failed: {exc}"
         payload = view if isinstance(view, str) else json.dumps(view)
@@ -613,7 +620,13 @@ def click_ui(
     time.sleep(0.05)  # focus (and a possible workspace switch) settles first
     hinput.click(x, y, button=button, double=double)
     trust.remember_seat()
-    return _acted(f"clicked {desc} at ({x}, {y}) in {client.get('class', '')}", then)
+    # observe the CLICKED window, not whatever holds focus after the click
+    # (the click itself may have spawned a dialog that stole it)
+    return _acted(
+        f"clicked {desc} at ({x}, {y}) in {client.get('class', '')}",
+        then,
+        window=client["address"],
+    )
 
 
 _ADDR = re.compile(r"^0x[0-9a-fA-F]+$")
@@ -833,7 +846,10 @@ _WAIT_EVENTS = {
     "window_open": {"openwindow"},
     "window_close": {"closewindow"},
     "workspace": {"workspace"},
-    "title_change": {"windowtitlev2", "windowtitle"},
+    # windowtitlev2 only: the plain windowtitle event carries just an
+    # address, so it can never satisfy a title match (and an unfiltered
+    # wait would return a payload with no title in it)
+    "title_change": {"windowtitlev2"},
     "layer_open": {"openlayer"},
     "layer_close": {"closelayer"},
     "urgent": {"urgent"},
@@ -861,6 +877,24 @@ def _already_satisfied(event: str, needle: str) -> dict[str, Any] | None:
         name = str(ws.get("name", ""))
         if needle in name.lower():
             return {"event": "workspace", "name": name, "already": True}
+    # layer waits are the classic late-subscribe case: use_bind returns,
+    # the launcher maps instantly, and only then does the agent call
+    # wait_for(layer_open); without this check that wait can never succeed.
+    # Filtered only, like workspace: some layer (a bar) is always mapped,
+    # so an unfiltered pre-check would answer instantly without waiting.
+    if event in ("layer_open", "layer_close") and needle:
+        mapped = next(
+            (
+                s
+                for s in hyprctl.parse_layers(hyprctl.query("layers"))
+                if needle in s.get("namespace", "").lower()
+            ),
+            None,
+        )
+        if event == "layer_open" and mapped is not None:
+            return {"event": "openlayer", "namespace": mapped["namespace"], "already": True}
+        if event == "layer_close" and mapped is None:
+            return {"event": "closelayer", "already": True}
     return None
 
 

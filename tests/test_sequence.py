@@ -47,7 +47,11 @@ def wired(monkeypatch):
     ran = []
     monkeypatch.setattr(srv.safety, "touch", lambda *a: None)
     monkeypatch.setattr(srv.hyprctl, "snapshot", lambda: {"snap": True})
-    monkeypatch.setattr(srv.hyprctl, "query", lambda cmd: {"name": ""})
+    # activeworkspace-shaped for most queries; the layer pre-check asks for
+    # "layers", whose real shape is a per-monitor dict (empty = none mapped)
+    monkeypatch.setattr(
+        srv.hyprctl, "query", lambda cmd: {} if cmd == "layers" else {"name": ""}
+    )
 
     def fake_dispatch(step):
         ran.append(step)

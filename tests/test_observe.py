@@ -52,6 +52,17 @@ def test_then_ui_appends_elements(monkeypatch):
     assert json.loads(out[1].text) == elements
 
 
+def test_then_ui_reads_the_callers_window(monkeypatch):
+    # a caller that knows which window it acted on passes it through, so
+    # the observation shows THAT window, not whatever holds focus now
+    seen = {}
+    monkeypatch.setattr(
+        srv, "_ui_read", lambda window="": seen.update(window=window) or []
+    )
+    srv._acted("clicked", "ui", window="0xw")
+    assert seen["window"] == "0xw"
+
+
 def test_then_ui_degrades_without_a_tree(monkeypatch):
     monkeypatch.setattr(srv, "_ui_read", lambda window="": "kitty exposes no tree")
     out = srv._acted("typed", "ui")
@@ -110,3 +121,33 @@ def test_hypr_targetless_fullscreen_honors_seat_guard(monkeypatch):
     # an address-targeted action names its window, so it is not seat-gated
     srv.trust._seat.update(cursor=(1, 1), active="0xa")
     assert srv.hypr("fullscreen", target="0xabc") == "fullscreen toggled"
+
+
+def test_desktop_rebaselines_the_strict_seat_guard(monkeypatch):
+    # the lockout bug: once the human nudged the seat, the guard refused
+    # forever, because its own advice ("re-read desktop() and retry") never
+    # re-baselined anything. A desktop() read must re-arm the guard.
+    monkeypatch.setenv("HYPRUSE_STRICT", "1")
+    srv.trust._seat.update(cursor=(1, 1), active="0xa")
+    monkeypatch.setattr(srv.hyprctl, "cursor_pos", lambda: (9, 9))
+    monkeypatch.setattr(srv.hyprctl, "query", lambda cmd: {"address": "0xb"})
+    with pytest.raises(srv.trust.TrustError, match="seat moved"):
+        srv.trust.guard_seat()
+    monkeypatch.setattr(srv.hyprctl, "snapshot", lambda: {"windows": []})
+    srv.desktop()
+    srv.trust.guard_seat()  # re-armed: no raise
+
+
+def test_capture_rebaselines_the_strict_seat_guard(monkeypatch):
+    # same recovery path for screenshot/zoom: any fresh capture counts as
+    # the re-observation the guard error asks for
+    monkeypatch.setenv("HYPRUSE_STRICT", "1")
+    srv.trust._seat.update(cursor=(1, 1), active="0xa")
+    monkeypatch.setattr(srv.hyprctl, "cursor_pos", lambda: (9, 9))
+    monkeypatch.setattr(srv.hyprctl, "query", lambda cmd: {"address": "0xb"})
+    monkeypatch.setattr(srv, "_grab_env", lambda *a, **k: (b"IMG", {"format": "jpeg"}))
+    monkeypatch.setattr(srv, "_package", lambda data, meta: ["pkg"])
+    with pytest.raises(srv.trust.TrustError, match="seat moved"):
+        srv.trust.guard_seat()
+    srv._deliver_capture()
+    srv.trust.guard_seat()  # re-armed: no raise

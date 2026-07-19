@@ -164,3 +164,17 @@ def test_draw_marks_real_imagemagick(tmp_path, monkeypatch):
     out = srv._draw_marks(src.read_bytes(), "jpeg", [(1, 15, 15), (12, 45, 25)])
     assert out is not None and out != src.read_bytes()
     assert shot.image_size(out) == (60, 40)  # dims unchanged, marks drawn
+
+
+def test_click_ui_then_ui_observes_the_clicked_window(wired, monkeypatch):
+    # the click may hand focus to a dialog it spawned; then='ui' must show
+    # the window the agent clicked, not whatever holds focus afterwards
+    reads = []
+
+    def ui_read(w="", name="", actionable=True):
+        reads.append(w)
+        return [e for e in ELEMENTS if name.lower() in e["name"].lower()]
+
+    monkeypatch.setattr(srv, "_ui_read", ui_read)
+    srv.click_ui(name="Body", then="ui")
+    assert reads == ["0xa", "0xa"]  # resolution, then the fused observation
