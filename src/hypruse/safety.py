@@ -12,7 +12,9 @@ shutdown. Anything can watch it, the shipped Waybar module (waybar/)
 shows a red indicator while an agent has hands on the desktop, and its
 click action (or a Hyprland keybind) runs `pkill -f hypruse`: the
 process dies mid-action at worst, never holding a button down, because
-button press/release pairs are sent inside one tool call.
+button press/release pairs are sent inside one tool call and the SIGTERM
+path runs registered cleanups (on_shutdown) that release anything a
+long-running drag still holds.
 """
 
 from __future__ import annotations
@@ -21,12 +23,21 @@ import atexit
 import contextlib
 import json
 import os
+import re
 import signal
 import time
+from collections.abc import Callable
 from pathlib import Path
 
 _state_path: Path | None = None
 _started: float = 0.0
+_cleanups: list[Callable[[], None]] = []
+
+# last_action is interpolated from tool arguments BEFORE they are
+# validated, and beacon consumers (the Waybar module) re-embed it in
+# output they build themselves: whitelist it down to a plain token so a
+# crafted argument can never forge or break that output.
+_ACTION_JUNK = re.compile(r"[^A-Za-z0-9:_.-]+")
 
 
 def state_path() -> Path:
@@ -70,14 +81,24 @@ def touch(action: str) -> None:
         {
             "pid": os.getpid(),
             "started": _started,
-            "last_action": action,
+            "last_action": _ACTION_JUNK.sub("", action)[:64],
             "last_ts": time.time(),
         }
     )
 
 
+def on_shutdown(fn: Callable[[], None]) -> None:
+    """Register a best-effort cleanup to run before the process dies,
+    whether by the SIGTERM kill switch or a normal shutdown; e.g. releasing
+    a pointer button an in-flight drag is holding."""
+    _cleanups.append(fn)
+
+
 def shutdown() -> None:
     global _state_path
+    while _cleanups:
+        with contextlib.suppress(Exception):
+            _cleanups.pop()()
     if _state_path is not None:
         with contextlib.suppress(OSError):
             _state_path.unlink(missing_ok=True)
