@@ -77,8 +77,8 @@ CLIPBOARD = os.environ.get("HYPRUSE_CLIPBOARD", "").lower() in ("1", "true", "ye
 _READONLY_NOTE = """
 
 READ-ONLY MODE is active: only observation tools are available
-(desktop, screenshot, zoom, binds, wait_for). Input, window-management,
-and use_bind are disabled by the user."""
+(desktop, screenshot, zoom, ui, binds, wait_for). Input,
+window-management, and use_bind are disabled by the user."""
 
 mcp = FastMCP("hypruse", instructions=INSTRUCTIONS + (_READONLY_NOTE if READONLY else ""))
 
@@ -823,7 +823,7 @@ def sequence(
 
 
 # Acting tools register only outside read-only mode; observation tools
-# (desktop, screenshot, zoom, binds, wait_for) are decorated above and
+# (desktop, screenshot, zoom, ui, binds, wait_for) are decorated above and
 # always on. Clipboard is double-gated: opt-in env flag, never read-only.
 if not READONLY:
     for _acting_tool in (pointer, keyboard, hypr, launch, use_bind, sequence):

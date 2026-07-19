@@ -54,7 +54,7 @@ Design decisions:
 | `wait_for` | Block on real compositor events (window open/close, workspace change, title change) with a match filter and timeout; replaces sleep-and-hope in multi-step automations |
 | `clipboard` | Read or write the text clipboard via `wl-clipboard`; opt-in, exists only with `HYPRUSE_CLIPBOARD=1` in the server env |
 
-The acting tools (`pointer`, `keyboard`, `hypr`, `use_bind`) take an optional `then` argument that appends the result to the same call, so the agent sees the effect without a second round-trip: `then='desktop'` adds a fresh semantic snapshot (~25 ms, cheap, best for window/focus changes), `then='screenshot'` a stable capture (best for visual changes), `then='none'` (default) nothing.
+The acting tools (`pointer`, `keyboard`, `hypr`, `use_bind`, `sequence`) take an optional `then` argument that appends the result to the same call, so the agent sees the effect without a second round-trip: `then='desktop'` adds a fresh semantic snapshot (~25 ms, cheap, best for window/focus changes), `then='screenshot'` a stable capture (best for visual changes), `then='none'` nothing (the default everywhere except `sequence`, which defaults to `'desktop'`).
 
 ## Install
 
@@ -87,7 +87,7 @@ claude mcp add -s user hypruse -- uv run --directory /path/to/hypruse hypruse
 
 Any other MCP client: run `uvx hypruse` as a stdio server.
 
-**Read-only mode:** set `HYPRUSE_READONLY=1` in the server config to expose only the observation tools (`desktop`, `screenshot`, `zoom`, `binds`, `wait_for`). The agent can see and narrate but cannot click, type, or launch. A good first week.
+**Read-only mode:** set `HYPRUSE_READONLY=1` in the server config to expose only the observation tools (`desktop`, `screenshot`, `zoom`, `ui`, `binds`, `wait_for`). The agent can see and narrate but cannot click, type, or launch. A good first week.
 
 ### Claude Desktop (Linux beta)
 
@@ -115,14 +115,15 @@ Read this section before installing. **hypruse hands an agent your mouse, your k
 2. **Visibility:** the server maintains an activity beacon (`$XDG_RUNTIME_DIR/hypruse/state.json`); the shipped [Waybar module](waybar/) is invisible when idle and shows a robot indicator while an agent has hands on your desktop.
 3. **Interruption:** click the indicator, or bind a panic key: `bind = SUPER SHIFT, BackSpace, exec, pkill -f hypruse`. Killing it mid-action is safe: button press/release pairs never span tool calls, so it cannot die holding a button.
 4. **The seat is shared.** There is one cursor and one keyboard focus, and Hyprland's focus-follows-mouse means a cursor move alone can retarget keystrokes. Don't type while an agent is driving; watch the indicator.
-5. **Scope:** stdio only (no network listener), nothing persisted except the beacon, and no clipboard access unless you opt in: `HYPRUSE_CLIPBOARD=1` registers a `clipboard` tool (never in read-only mode); clipboards hold passwords, so leave it off unless a workflow needs it. A screenshot sees everything visible: treat an agent session like screen sharing.
+5. **Scope:** stdio only (no network listener), nothing persisted except the beacon and the capped screenshot cache in `$XDG_RUNTIME_DIR` (tmpfs, newest 20), and no clipboard access unless you opt in: `HYPRUSE_CLIPBOARD=1` registers a `clipboard` tool (never in read-only mode); clipboards hold passwords, so leave it off unless a workflow needs it. A screenshot sees everything visible: treat an agent session like screen sharing.
+6. **What the agent reads is untrusted.** Window titles, accessibility names and values, and clipboard text flow verbatim into the agent's context, and any web page, filename, or document can put instructions there (prompt injection). hypruse cannot sanitize meaning, so the approval layer is the backstop: keep consequential tools (`launch`, `keyboard`, `clipboard`) on ask-first when the agent will look at untrusted windows, and treat "the screen told me to" as attacker input when reviewing an approval prompt.
 
 ## Performance
 
 Measured on a live session (Hyprland 0.55, 1080p, 20 windows): `desktop`
-~20 ms (one batched `hyprctl` call), workspace/window dispatch ~10-20 ms, full-monitor screenshot ~50 ms
-(fast JPEG default; ~440 ms if you ask for lossless PNG), region/zoom
-captures well under that. If tool
+~20 ms (one batched `hyprctl` call), workspace/window dispatch ~10-20 ms, full-monitor screenshot ~65 ms
+(fast JPEG default; ~800 ms if you ask for lossless PNG, grim's zlib
+path dominates), region/zoom captures well under that. If tool
 calls *feel* slow, it is almost certainly the MCP **approval prompt** in
 front of each call, not the server. Allowlist the tools you trust and the
 latency disappears. Claude Code (`.claude/settings.json`):
@@ -146,7 +147,7 @@ Everything speaks Hyprland's global logical coordinates, the space `hyprctl curs
 
 The `zoom` tool does the precision arithmetic for the agent: give it an estimated global point and it captures a native-resolution box around it, clamped to the screen (or to a window), with the same metadata contract. That two-step loop, estimate on the full view then re-estimate on the zoom, is the [research-backed](#research) way to hit small controls.
 
-Captures default to JPEG q90: on a 1080p frame that is roughly 13x faster to encode than PNG (grim's zlib path dominates capture time) and about 3x smaller, while full-res q90 reads UI text well. Pass `lossless=true` for exact pixels (PNG). In image mode, captures also fit the host's result-size limit (Claude Desktop caps tool results at 1 MB) by degrading quality before resolution, since grim's downscale filter is slower than a full-res capture. The applied scale is folded into the returned metadata, so coordinate mapping stays exact; tune with `HYPRUSE_MAX_IMAGE_BYTES`, or pass `scale` for a deliberate zoom-out.
+Captures default to JPEG q90: on a 1080p frame that is roughly 12x faster to encode than PNG (grim's zlib path dominates capture time, measured ~65 ms vs ~800 ms) and 3-4x smaller, while full-res q90 reads UI text well. Pass `lossless=true` for exact pixels (PNG). In image mode, captures also fit the host's result-size limit (Claude Desktop caps tool results at 1 MB) by degrading quality before resolution, since grim's downscale filter is slower than a full-res capture, and cap the long edge at `HYPRUSE_MAX_IMAGE_EDGE` pixels (default 1568) so the host never downscales the image under the model. The applied scale is folded into the returned metadata, so coordinate mapping stays exact; tune with `HYPRUSE_MAX_IMAGE_BYTES`, or pass `scale` for a deliberate zoom-out.
 
 By default the screenshot tool writes the image under `$XDG_RUNTIME_DIR/hypruse/` and returns its path; MCP hosts with a file reader (Claude Code's `Read`) render it natively. This default exists because some hosts (including Claude Code 2.1.x) serialize inline MCP image blocks to base64 text the model cannot see. `HYPRUSE_SCREENSHOT_MODE=image` switches to inline image content blocks for hosts that render them correctly.
 

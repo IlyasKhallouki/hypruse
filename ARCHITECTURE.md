@@ -7,13 +7,17 @@ Ten-minute orientation for contributors.
 ```
 src/hypruse/
   cli.py         entry point: server by default, doctor / init subcommands
-  server.py      MCP wiring: 8 tools, docstrings = the agent-facing API
+  server.py      MCP wiring: 13 tools (clipboard is opt-in), docstrings =
+                 the agent-facing API
   hyprctl.py     all Hyprland IPC (queries + dispatchers), state trimming,
                  keybind decoding
   events.py      socket2 event stream: parser + wait primitive
   wire.py        raw Wayland client for zwlr_virtual_pointer_v1
   input.py       pointer orchestration (movecursor + wire) and wtype keyboard
   screenshot.py  grim capture: monitor / window / region + coord metadata
+  a11y.py        AT-SPI accessibility-tree reader over D-Bus (busctl): the
+                 `ui` tool's element names, coordinates, and values
+  clipboard.py   wl-clipboard wrapper for the opt-in clipboard tool
   session.py     discovers HYPRLAND_INSTANCE_SIGNATURE / WAYLAND_DISPLAY
                  from runtime-dir sockets when the host stripped the env
   safety.py      activity beacon + kill-switch semantics
