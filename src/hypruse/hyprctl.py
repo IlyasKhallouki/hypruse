@@ -148,16 +148,65 @@ def _monitor(m: dict[str, Any]) -> dict[str, Any]:
     return out
 
 
+# layer-shell surfaces are not windows: launchers, bars, notification
+# daemons, and lock screens live here, invisible to `clients`. Namespaces
+# are app-chosen strings, so classification is a prefix heuristic that
+# degrades to 'unknown' rather than mislabeling.
+_LAYER_LEVELS = ("background", "bottom", "top", "overlay")
+
+_LAYER_KINDS = (
+    ("launcher", ("wofi", "rofi", "fuzzel", "tofi", "anyrun", "walker", "launcher")),
+    ("bar", ("waybar", "hyprpanel", "ags-", "bar")),
+    ("notifications", ("mako", "dunst", "swaync", "notification")),
+    ("lock", ("hyprlock", "swaylock", "lockscreen")),
+    ("osk", ("wvkbd", "squeekboard", "osk")),
+)
+
+
+def layer_kind(namespace: str) -> str:
+    ns = namespace.lower()
+    for kind, prefixes in _LAYER_KINDS:
+        if any(ns.startswith(p) for p in prefixes):
+            return kind
+    return "unknown"
+
+
+def parse_layers(raw: dict[str, Any]) -> list[dict[str, Any]]:
+    """Flatten `hyprctl layers -j` (monitor -> level -> surfaces) into a
+    model view. The background level (wallpaper daemons) is dropped as
+    noise; geometry is already global logical, the same space as window
+    `at`/`size`."""
+    out: list[dict[str, Any]] = []
+    for monitor, entry in (raw or {}).items():
+        for level_id, surfaces in (entry.get("levels") or {}).items():
+            level = int(level_id)
+            if level == 0 or not surfaces:
+                continue
+            for s in surfaces:
+                ns = s.get("namespace", "")
+                out.append(
+                    {
+                        "namespace": ns,
+                        "kind": layer_kind(ns),
+                        "level": _LAYER_LEVELS[level] if level < 4 else str(level),
+                        "monitor": monitor,
+                        "geometry": [s.get("x"), s.get("y"), s.get("w"), s.get("h")],
+                    }
+                )
+    return out
+
+
 def snapshot_from(
     monitors: list[dict[str, Any]],
     workspaces: list[dict[str, Any]],
     clients: list[dict[str, Any]],
     active_window: dict[str, Any] | None,
     cursor: tuple[int, int] | None,
+    layers: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Pure assembly of the desktop state, separated from IPC for testability."""
     visible = {m.get("activeWorkspace", {}).get("id") for m in monitors}
-    return {
+    snap = {
         "monitors": [_monitor(m) for m in monitors],
         "workspaces": [
             {
@@ -173,16 +222,20 @@ def snapshot_from(
         "active_window": (active_window or {}).get("address"),
         "cursor": list(cursor) if cursor else None,
     }
+    surfaces = parse_layers(layers or {})
+    if surfaces:  # token-lean: absent when there is nothing but wallpaper
+        snap["layers"] = surfaces
+    return snap
 
 
 def snapshot() -> dict[str, Any]:
     """Compact, token-lean view of the whole desktop, from one batched
-    hyprctl call (~4x faster than five separate queries)."""
-    monitors, workspaces, clients, active, cursor = batch_query(
-        ["monitors", "workspaces", "clients", "activewindow", "cursorpos"]
+    hyprctl call (~4x faster than separate queries)."""
+    monitors, workspaces, clients, active, cursor, layers = batch_query(
+        ["monitors", "workspaces", "clients", "activewindow", "cursorpos", "layers"]
     )
     cur = (int(cursor["x"]), int(cursor["y"])) if cursor else None
-    return snapshot_from(monitors, workspaces, clients, active or None, cur)
+    return snapshot_from(monitors, workspaces, clients, active or None, cur, layers)
 
 
 # X11 modifier bits as Hyprland reports them in `binds` modmask

@@ -147,6 +147,7 @@ def test_snapshot_uses_one_batched_call(monkeypatch):
             FIX["clients"],
             FIX["activewindow"],
             {"x": FIX["cursorpos"]["x"], "y": FIX["cursorpos"]["y"]},
+            {},
         ]
 
     monkeypatch.setattr(hyprctl, "batch_query", fake_batch)
@@ -161,7 +162,54 @@ def test_snapshot_handles_no_active_window(monkeypatch):
     monkeypatch.setattr(
         hyprctl,
         "batch_query",
-        lambda cmds: [FIX["monitors"], FIX["workspaces"], [], {}, {"x": 0, "y": 0}],
+        lambda cmds: [FIX["monitors"], FIX["workspaces"], [], {}, {"x": 0, "y": 0}, {}],
     )
     s = hyprctl.snapshot()
     assert s["active_window"] is None  # empty activewindow object -> None
+
+
+LAYERS_RAW = {
+    "eDP-1": {
+        "levels": {
+            "0": [{"address": "0x1", "x": 0, "y": 0, "w": 1920, "h": 1080,
+                   "namespace": "awww-daemon", "pid": 100}],
+            "1": [{"address": "0x2", "x": 0, "y": 0, "w": 1920, "h": 38,
+                   "namespace": "waybar", "pid": 101}],
+            "2": [],
+            "3": [{"address": "0x3", "x": 660, "y": 300, "w": 600, "h": 400,
+                   "namespace": "wofi", "pid": 102},
+                  {"address": "0x4", "x": 1540, "y": 48, "w": 370, "h": 110,
+                   "namespace": "notifications", "pid": 103}],
+        }
+    }
+}
+
+
+def test_parse_layers_flattens_and_classifies():
+    out = hyprctl.parse_layers(LAYERS_RAW)
+    by_ns = {s["namespace"]: s for s in out}
+    assert "awww-daemon" not in by_ns  # background level (wallpaper) dropped
+    assert by_ns["waybar"]["kind"] == "bar"
+    assert by_ns["waybar"]["level"] == "bottom"
+    assert by_ns["wofi"] == {
+        "namespace": "wofi", "kind": "launcher", "level": "overlay",
+        "monitor": "eDP-1", "geometry": [660, 300, 600, 400],
+    }
+    assert by_ns["notifications"]["kind"] == "notifications"
+
+
+def test_parse_layers_unknown_namespace_degrades():
+    raw = {"DP-1": {"levels": {"2": [
+        {"x": 0, "y": 0, "w": 10, "h": 10, "namespace": "some-custom-widget"}
+    ]}}}
+    out = hyprctl.parse_layers(raw)
+    assert out[0]["kind"] == "unknown"  # heuristic degrades, never mislabels
+    assert hyprctl.parse_layers({}) == []
+    assert hyprctl.parse_layers({"eDP-1": {"levels": {}}}) == []
+
+
+def test_snapshot_surfaces_layers_only_when_present():
+    s = hyprctl.snapshot_from(FIX["monitors"], FIX["workspaces"], [], None, None, LAYERS_RAW)
+    assert {x["namespace"] for x in s["layers"]} == {"waybar", "wofi", "notifications"}
+    bare = hyprctl.snapshot_from(FIX["monitors"], FIX["workspaces"], [], None, None, {})
+    assert "layers" not in bare  # token-lean when only wallpaper exists

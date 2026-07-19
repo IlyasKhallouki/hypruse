@@ -36,6 +36,13 @@ _SCHEMAS: dict[str, tuple[tuple[str, ...], int]] = {
     "activewindowv2": (("address",), 0),
     "windowtitlev2": (("address", "title"), 1),
     "windowtitle": (("address",), 0),
+    # layer-shell surfaces: launchers, bars, notification popups, lock
+    # screens; namespace is the surface's app-chosen layer name
+    "openlayer": (("namespace",), 0),
+    "closelayer": (("namespace",), 0),
+    "urgent": (("address",), 0),
+    # screen sharing started/stopped: state 0|1, owner 0=monitor 1=window
+    "screencast": (("state", "owner"), 1),
 }
 
 _ADDRESS_FIELDS = {"address"}

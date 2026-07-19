@@ -44,6 +44,31 @@ def test_unknown_then_raises():
         srv._acted("x", "wat")
 
 
+def test_then_ui_appends_elements(monkeypatch):
+    elements = [{"role": "entry", "name": "Email", "x": 5, "y": 6, "value": "hi@x"}]
+    monkeypatch.setattr(srv, "_ui_read", lambda window="": elements)
+    out = srv._acted("typed", "ui")
+    assert out[0].text == "typed"
+    assert json.loads(out[1].text) == elements
+
+
+def test_then_ui_degrades_without_a_tree(monkeypatch):
+    monkeypatch.setattr(srv, "_ui_read", lambda window="": "kitty exposes no tree")
+    out = srv._acted("typed", "ui")
+    assert out[1].text == "kitty exposes no tree"
+
+
+def test_then_ui_never_masks_the_action(monkeypatch):
+    # the action succeeded; a failing observation must not turn it into an error
+    def boom(window=""):
+        raise ValueError("no active window")
+
+    monkeypatch.setattr(srv, "_ui_read", boom)
+    out = srv._acted("clicked", "ui")
+    assert out[0].text == "clicked"
+    assert "ui read failed" in out[1].text
+
+
 def test_pointer_fuses_observation(monkeypatch):
     monkeypatch.setattr(srv.hinput, "move", lambda x, y: None)
     monkeypatch.setattr(srv.hyprctl, "cursor_pos", lambda: (10, 20))

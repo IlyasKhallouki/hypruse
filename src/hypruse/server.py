@@ -100,8 +100,12 @@ def _prune_shots(d: Path, keep: int = 20) -> None:
 @mcp.tool()
 def desktop() -> dict[str, Any]:
     """Semantic desktop snapshot: monitors, workspaces, windows (address,
-    class, title, `at` + `size` in global coords), active window, cursor.
-    Call first; act on the addresses it returns."""
+    class, title, `at` + `size` in global coords), active window, cursor,
+    and `layers` when layer-shell surfaces are up: launchers (wofi/rofi),
+    bars, notification popups, and lock screens are NOT windows and appear
+    only there, with a best-effort `kind` and global geometry you can
+    screenshot by region or click into. Call first; act on the addresses
+    it returns."""
     return hyprctl.snapshot()
 
 
@@ -208,25 +212,10 @@ def _resolve_window(window: str) -> dict[str, Any]:
     return client
 
 
-@mcp.tool()
-def ui(window: str = "", name: str = "", actionable: bool = True) -> list[Any] | str:
-    """Read a window's accessibility tree (AT-SPI) and return its elements
-    with GLOBAL click points, so you can target a control by NAME with no
-    screenshot and no pixel guessing. `window` is an address from desktop
-    (default: the focused window). `name` filters to elements whose
-    accessible name contains it (case-insensitive); `actionable` (default)
-    keeps only interactive roles (buttons, entries, menu items, ...).
-    Returns [{role, name, x, y, clickable}] where x,y is the click point:
-    focus the window, then click it with `pointer` (the window must be
-    visible to receive the click). Controls that carry a CURRENT VALUE also
-    report it: `value` (text typed into an entry, or a slider/spinner
-    number), `percent` for a slider's position, `checked` for a box or
-    toggle. Password fields never report contents, and many dropdowns
-    expose no value at all, so read the screen with screenshot when a
-    rendered value matters. Not every app exposes a tree (terminals, and
-    Electron/Chrome without --force-renderer-accessibility, expose little
-    or nothing); when it does not, fall back to screenshot + zoom."""
-    safety.touch("ui")
+def _ui_read(window: str = "", name: str = "", actionable: bool = True) -> list[Any] | str:
+    """Shared body of the `ui` tool: a window's accessible elements with
+    global click points and current values, or a fall-back-to-vision
+    message. Reused by `then='ui'` fusion and click-by-name resolution."""
     client = _resolve_window(window)
     title = client.get("title", "")
     cls = client.get("class", "the window")
@@ -270,7 +259,30 @@ def ui(window: str = "", name: str = "", actionable: bool = True) -> list[Any] |
     return out
 
 
-_OBSERVE_MODES = ("none", "desktop", "screenshot")
+@mcp.tool()
+def ui(window: str = "", name: str = "", actionable: bool = True) -> list[Any] | str:
+    """Read a window's accessibility tree (AT-SPI) and return its elements
+    with GLOBAL click points, so you can target a control by NAME with no
+    screenshot and no pixel guessing. `window` is an address from desktop
+    (default: the focused window). `name` filters to elements whose
+    accessible name contains it (case-insensitive); `actionable` (default)
+    keeps only interactive roles (buttons, entries, menu items, ...).
+    Returns [{role, name, x, y, clickable}] where x,y is the click point:
+    focus the window, then click it with `pointer` (the window must be
+    visible to receive the click), or do both in one call with `click_ui`.
+    Controls that carry a CURRENT VALUE also
+    report it: `value` (text typed into an entry, or a slider/spinner
+    number), `percent` for a slider's position, `checked` for a box or
+    toggle. Password fields never report contents, and many dropdowns
+    expose no value at all, so read the screen with screenshot when a
+    rendered value matters. Not every app exposes a tree (terminals, and
+    Electron/Chrome without --force-renderer-accessibility, expose little
+    or nothing); when it does not, fall back to screenshot + zoom."""
+    safety.touch("ui")
+    return _ui_read(window, name, actionable)
+
+
+_OBSERVE_MODES = ("none", "desktop", "screenshot", "ui")
 
 
 def _acted(msg: str, then: str) -> list[Any] | str:
@@ -279,7 +291,11 @@ def _acted(msg: str, then: str) -> list[Any] | str:
     without spending a second round-trip. `then='desktop'` appends a
     semantic snapshot (~30 ms, a few hundred tokens, best for window/focus
     changes); `'screenshot'` appends a stable capture of the focused
-    monitor (best for visual changes); `'none'` appends nothing."""
+    monitor (best for visual changes); `'ui'` appends the focused window's
+    accessible elements with their CURRENT values (a few hundred exact
+    tokens instead of an image: best after typing or toggling in an app
+    that exposes a tree, degrades to a note when it does not);
+    `'none'` appends nothing."""
     if then == "none":
         return msg
     head = TextContent(type="text", text=msg)
@@ -287,6 +303,13 @@ def _acted(msg: str, then: str) -> list[Any] | str:
         return [head, TextContent(type="text", text=json.dumps(hyprctl.snapshot()))]
     if then == "screenshot":
         return [head, *_deliver_capture(stable=True)]
+    if then == "ui":
+        try:
+            view = _ui_read()
+        except Exception as exc:  # the observation must never mask the action's success
+            view = f"ui read failed: {exc}"
+        payload = view if isinstance(view, str) else json.dumps(view)
+        return [head, TextContent(type="text", text=payload)]
     raise ValueError(f"unknown then {then!r}: {'|'.join(_OBSERVE_MODES)}")
 
 
@@ -307,7 +330,8 @@ def pointer(
     to_x,to_y holding button) | 'scroll' (scroll_dy notches, positive =
     content down; optional x,y first). `then` appends the result to this
     call so you skip a round-trip: 'desktop' a fresh snapshot, 'screenshot'
-    a stable capture, 'none' (default) nothing."""
+    a stable capture, 'ui' the focused window's elements with current
+    values, 'none' (default) nothing."""
     safety.touch(f"pointer:{action}")
     if action == "move":
         if x is None or y is None:
@@ -337,7 +361,7 @@ def keyboard(
     holds focus. This drives shortcuts the focused application handles
     (ctrl+t, ctrl+l). It does NOT trigger Hyprland's own keybinds
     (super+...): those go through `use_bind`, and workspace/window actions
-    through `hypr`. `then` ('desktop'|'screenshot'|'none') appends the
+    through `hypr`. `then` ('desktop'|'screenshot'|'ui'|'none') appends the
     result to this call."""
     safety.touch(f"keyboard:{action}")
     if window:
@@ -373,7 +397,7 @@ def hypr(action: str, target: str = "", workspace: str = "", then: str = "none")
     action='workspace' (workspace: number/name/'special:name') |
     'focus_window' (target: address) | 'move_window' (target + workspace,
     silent) | 'close_window' (target) | 'fullscreen' (target?) |
-    'toggle_floating' (target?). `then` ('desktop'|'screenshot'|'none')
+    'toggle_floating' (target?). `then` ('desktop'|'screenshot'|'ui'|'none')
     appends the result to this call."""
     safety.touch(f"hypr:{action}")
     if action == "workspace":
@@ -537,7 +561,7 @@ def use_bind(combo: str, then: str = "none") -> list[Any] | str:
     `binds` tool), e.g. 'SUPER+F'. This executes the bound action directly
     (the only reliable way: synthetic keypresses do not trigger compositor
     binds). Use it to drive the owner's configured workflows: launchers,
-    layout shortcuts, scratchpads. `then` ('desktop'|'screenshot'|'none')
+    layout shortcuts, scratchpads. `then` ('desktop'|'screenshot'|'ui'|'none')
     appends the result to this call (handy after a launcher bind)."""
     safety.touch("use_bind")
     bind = hyprctl.find_bind(combo)
@@ -553,6 +577,10 @@ _WAIT_EVENTS = {
     "window_close": {"closewindow"},
     "workspace": {"workspace"},
     "title_change": {"windowtitlev2", "windowtitle"},
+    "layer_open": {"openlayer"},
+    "layer_close": {"closelayer"},
+    "urgent": {"urgent"},
+    "screencast": {"screencast"},
 }
 
 
@@ -583,11 +611,14 @@ def _already_satisfied(event: str, needle: str) -> dict[str, Any] | None:
 def wait_for(event: str, match: str = "", timeout_s: float = 10) -> dict[str, Any] | str:
     """Block until a desktop event happens (real compositor events, not
     polling). event: 'window_open' | 'window_close' | 'workspace' |
-    'title_change'. match: optional case-insensitive substring filter over
-    the event's fields (class/title/workspace name/address). timeout_s
-    1-60, default 10. Returns the event payload, or a timeout note. Use it
-    after actions with delayed effects: app startups, page loads that
-    change a window title."""
+    'title_change' | 'layer_open' | 'layer_close' (layer-shell surfaces:
+    launchers, notification popups; match on the namespace, e.g. 'wofi') |
+    'urgent' (a window demands attention) | 'screencast' (screen sharing
+    started/stopped). match: optional case-insensitive substring filter
+    over the event's fields (class/title/workspace name/address/namespace).
+    timeout_s 1-60, default 10. Returns the event payload, or a timeout
+    note. Use it after actions with delayed effects: app startups, page
+    loads that change a window title, a launcher bind that pops a layer."""
     names = _WAIT_EVENTS.get(event)
     if names is None:
         raise ValueError(f"unknown event {event!r}: {'|'.join(_WAIT_EVENTS)}")
@@ -622,7 +653,20 @@ _SEQ_HANDLERS = {"pointer": pointer, "keyboard": keyboard, "hypr": hypr, "wait_f
 # abort the sequence on its own clicks. The consequence is that a bare
 # focus steal is NOT caught; a keyboard step's window= (which focuses
 # first) is the reliable guard against typing into the wrong window.
-_WATCHED_EVENTS = {"openwindow", "closewindow", "movewindow", "workspace"}
+# Layer events count only for kinds that grab the keyboard (a launcher or
+# lock screen popping up mid-sequence would swallow the next keystrokes);
+# notification popups and bars are noise, not a takeover.
+_WATCHED_EVENTS = {
+    "openwindow", "closewindow", "movewindow", "workspace", "openlayer", "closelayer",
+}
+
+_FOCUS_STEALING_LAYERS = {"launcher", "lock", "osk"}
+
+
+def _structural(name: str, payload: dict[str, Any]) -> bool:
+    if name in ("openlayer", "closelayer"):
+        return hyprctl.layer_kind(payload.get("namespace", "")) in _FOCUS_STEALING_LAYERS
+    return name in _WATCHED_EVENTS
 
 _SEQ_MAX_STEPS = 20
 _SEQ_SETTLE = 0.2  # between-step window to let a structural change surface
@@ -638,6 +682,8 @@ def _event_signature(name: str, payload: dict[str, Any]) -> str:
         return f"workspace:{payload.get('name', '')}"
     if name in ("openwindow", "closewindow", "movewindow"):
         return f"{name}:{payload.get('address', '')}"
+    if name in ("openlayer", "closelayer"):
+        return f"{name}:{payload.get('namespace', '')}"
     return name
 
 
@@ -685,7 +731,7 @@ def _unexpected(drained, expected_sigs, wait_names):
     return [
         (n, p)
         for n, p in drained
-        if n in _WATCHED_EVENTS
+        if _structural(n, p)
         and _event_signature(n, p) not in expected_sigs
         and n not in wait_names
     ]
@@ -744,12 +790,14 @@ def sequence(
     {"op":"keyboard","action":"key","keys":"enter"}]. With stop_on_change
     (default) the run stops, best-effort, when it notices a STRUCTURAL
     change between steps that the step did not intend: a window opening
-    (e.g. a dialog), closing, or moving, or a switch to an unexpected
-    workspace, so later steps do not act on stale state. It does NOT catch
+    (e.g. a dialog), closing, or moving, a switch to an unexpected
+    workspace, or a keyboard-grabbing layer surface (a launcher or lock
+    screen) appearing, so later steps do not act on stale state.
+    Notification popups and bars are not treated as changes. It does NOT catch
     a bare focus change, so to type into a specific window reliably give
     that keyboard step a window= address (it focuses first). Bounded to 20
     steps and ~30s total. `then` observes the final state ('desktop'
-    default, 'screenshot', 'none')."""
+    default, 'screenshot', 'ui', 'none')."""
     safety.touch("sequence")
     if not steps:
         raise ValueError("sequence needs at least one step")

@@ -249,6 +249,43 @@ def test_wait_step_match_filters_backlog(wired, monkeypatch):
     assert len(stream.wait_calls) == 1  # it went on to block for the real one
 
 
+def test_launcher_layer_opening_stops(wired, monkeypatch):
+    # a wofi launcher appearing mid-sequence grabs the keyboard: the type
+    # step must not run into it
+    _stream(monkeypatch, [[("openlayer", {"namespace": "wofi"})]])
+    steps = [
+        {"op": "pointer", "action": "click", "x": 1, "y": 2},
+        {"op": "keyboard", "action": "type", "text": "into-the-launcher"},
+    ]
+    out = srv.sequence(steps, then="none")
+    assert [s["op"] for s in wired] == ["pointer"]
+    assert "openlayer" in _head(out) and "stopped after 1/2" in _head(out)
+
+
+def test_notification_layer_is_noise(wired, monkeypatch):
+    # a mako notification popping up is not a takeover; the run continues
+    _stream(monkeypatch, [[("openlayer", {"namespace": "notifications"})]])
+    steps = [
+        {"op": "pointer", "action": "click", "x": 1, "y": 2},
+        {"op": "keyboard", "action": "type", "text": "ok"},
+    ]
+    out = srv.sequence(steps, then="none")
+    assert [s["op"] for s in wired] == ["pointer", "keyboard"]
+    assert "all 2/2" in _head(out)
+
+
+def test_click_then_wait_layer_open_is_excused(wired, monkeypatch):
+    # click something that pops a launcher, then wait for that layer: the
+    # openlayer is what the next step waits for, not an unexpected change
+    _stream(monkeypatch, [[("openlayer", {"namespace": "wofi"})]])
+    steps = [
+        {"op": "pointer", "action": "click", "x": 1, "y": 2},
+        {"op": "wait_for", "event": "layer_open", "match": "wofi"},
+    ]
+    out = srv.sequence(steps, then="none")
+    assert "all 2/2" in _head(out) and "wofi" in _head(out)
+
+
 def test_final_drain_reports_last_step_change(wired, monkeypatch):
     # a change caused by the LAST step is reported, not silently missed
     _stream(monkeypatch, [[("openwindow", {"address": "0xz"})]])

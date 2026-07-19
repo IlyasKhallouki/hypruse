@@ -41,3 +41,20 @@ def test_parse_garbage_returns_none():
 def test_existing_0x_prefix_untouched():
     _, p = events.parse_event("closewindow>>0xabc")
     assert p["address"] == "0xabc"
+
+
+def test_parse_layer_events():
+    assert events.parse_event("openlayer>>wofi") == ("openlayer", {"namespace": "wofi"})
+    assert events.parse_event("closelayer>>notifications") == (
+        "closelayer", {"namespace": "notifications"}
+    )
+
+
+def test_parse_urgent_normalizes_address():
+    name, p = events.parse_event("urgent>>5f2a1b")
+    assert (name, p["address"]) == ("urgent", "0x5f2a1b")
+
+
+def test_parse_screencast():
+    name, p = events.parse_event("screencast>>1,0")
+    assert (name, p) == ("screencast", {"state": "1", "owner": "0"})
