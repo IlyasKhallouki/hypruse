@@ -6,6 +6,8 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.8.0] - 2026-07-19
+
 ### Added
 - `desktop` reports layer-shell surfaces: launchers (wofi/rofi), bars,
   notification popups, and lock screens are not windows and were
