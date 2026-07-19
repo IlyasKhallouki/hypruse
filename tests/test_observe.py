@@ -92,3 +92,21 @@ def test_hypr_fuses_observation(monkeypatch):
     assert srv.hypr("workspace", workspace="3") == "on workspace 3"
     fused = srv.hypr("workspace", workspace="3", then="desktop")
     assert isinstance(fused, list) and json.loads(fused[1].text) == {"ok": True}
+
+
+def test_hypr_targetless_fullscreen_honors_seat_guard(monkeypatch):
+    # target-less fullscreen/toggle_floating act on the ACTIVE window; under
+    # HYPRUSE_STRICT, if the human refocused since hypruse last acted, they
+    # would hit the wrong window, so the seat guard must refuse
+    monkeypatch.setenv("HYPRUSE_STRICT", "1")
+    monkeypatch.setattr(srv.hyprctl, "dispatch", lambda *a: None)
+    monkeypatch.setattr(srv.safety, "touch", lambda *a: None)
+    # seat baseline says cursor (1,1)/active 0xa; now it reads (9,9)/0xb -> moved
+    srv.trust._seat.update(cursor=(1, 1), active="0xa")
+    monkeypatch.setattr(srv.hyprctl, "cursor_pos", lambda: (9, 9))
+    monkeypatch.setattr(srv.hyprctl, "query", lambda cmd: {"address": "0xb"})
+    with pytest.raises(srv.trust.TrustError, match="seat moved"):
+        srv.hypr("fullscreen")  # no target -> guarded
+    # an address-targeted action names its window, so it is not seat-gated
+    srv.trust._seat.update(cursor=(1, 1), active="0xa")
+    assert srv.hypr("fullscreen", target="0xabc") == "fullscreen toggled"

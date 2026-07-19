@@ -637,10 +637,14 @@ def hypr(action: str, target: str = "", workspace: str = "", then: str = "none")
     safety.touch(f"hypr:{action}")
     # confinement: any action naming a specific window must stay in scope;
     # fullscreen/toggle_floating with no target hit the ACTIVE window, so
-    # resolve and guard that too
+    # resolve and guard that too, and check the seat has not moved under us
+    # (in strict mode, so we do not fullscreen a window the human just
+    # refocused). Address-targeted actions name their window, so they skip
+    # the seat guard to avoid false refusals.
     if target and action != "workspace":
         trust.guard_window(target)
     elif not target and action in ("fullscreen", "toggle_floating"):
+        trust.guard_seat()
         active = _active_client()
         if active is not None:
             trust.guard_client(active)
