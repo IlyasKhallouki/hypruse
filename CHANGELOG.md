@@ -22,9 +22,12 @@ All notable changes to this project are documented here. The format follows
   still skip it, since they name their window).
 
 ### Changed
-- Documentation reorganized for the larger 0.8.0/0.9.x feature set: the
-  README roadmap no longer lists shipped work (`sequence`, `then=` fusion,
-  the a11y tools) as future and gains "Deeper reading", "Trust", and
+- Documentation reorganized for the larger 0.8.0/0.9.x feature set: a new
+  README "Features" section groups the tools into five capabilities
+  (semantic control, click-by-name, the zoom loop, round-trip fusion,
+  trust) ordered cheapest-first, each with a "use it well" tip; the
+  roadmap no longer lists shipped work (`sequence`, `then=` fusion, the
+  a11y tools) as future and gains "Deeper reading", "Trust", and
   "Measurement" sections; the "How it works" diagram shows the AT-SPI
   (`busctl`) path the `ui`/`marks`/`click_ui` tools use; the security
   model documents `pointer`'s `allow_auth` and that `use_bind` is refused

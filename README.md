@@ -63,6 +63,40 @@ Design decisions:
 
 The acting tools (`pointer`, `keyboard`, `click_ui`, `hypr`, `use_bind`, `sequence`) take an optional `then` argument that appends the result to the same call, so the agent sees the effect without a second round-trip: `then='desktop'` adds a fresh semantic snapshot (~20 ms, cheap, best for window/focus changes), `then='screenshot'` a stable capture (best for visual changes), `then='ui'` the focused window's controls with their current values (a few hundred exact tokens, best after typing or toggling), `then='none'` nothing (the default everywhere except `sequence`, which defaults to `'desktop'`).
 
+## Features
+
+The tools group into five capabilities, ordered most-reliable-and-cheapest first. An agent that reaches for them in this order is both faster and more accurate, and many tasks never need a screenshot at all.
+
+### 1. Semantic desktop control (start here)
+
+`desktop` returns the entire window and workspace tree in one call: every window's address, class, title, and geometry, the active window, the cursor, and any layer surfaces on screen (launchers, bars, notification popups, lock screens). `hypr` and `launch` then act on it over IPC in milliseconds: switch workspace, focus/move/close/fullscreen/float a window by address, or start an app.
+
+**Use it well:** never take a screenshot to find or arrange windows. Read `desktop`, act on the address you want. `launch` blocks on the real `openwindow` event and hands back the new window's address, so there is nothing to poll or guess; it also relocates single-instance apps (browsers) that ignore workspace rules.
+
+### 2. Click controls by name, no pixels
+
+When an app exposes an accessibility tree (most GTK and Qt apps), you can target controls by name instead of by pixel. `ui` lists every control with its exact global coordinate, and reports the current value of the controls that carry one: the text in a field, a slider's percentage, a checkbox's state. `click_ui` resolves a name and clicks it in one call, through the real cursor (so the beacon and every safety guarantee still apply). `marks` draws numbered marks over a screenshot with a legend, for when you want to see the options first and then `click_ui(mark=N)`.
+
+**Use it well:** reach for `click_ui name="Save"` before estimating any pixel, since it is exact and spends no image. Read a form's state with `ui` (did the box actually tick?) instead of screenshotting it. An ambiguous name returns the candidates rather than guessing. When an app exposes no tree (terminals, canvas apps, Electron/Chrome without `--force-renderer-accessibility`) the tool says so, and you fall back to vision.
+
+### 3. Vision when it matters: the zoom loop
+
+For everything the accessibility tree cannot name, `screenshot` (monitor, window crop, or region) and `zoom` (a native-resolution re-capture around a point) carry a strict coordinate contract, `global = geometry + pixel / scale`, that stays exact on every monitor and fractional scale.
+
+**Use it well:** don't guess a small control from a full-screen image. Work coarse-to-fine: screenshot the window, estimate the target, `zoom` there, re-estimate on the sharp crop, then click. This two-step loop is the [research-backed](#research) way to hit small targets.
+
+### 4. Fewer round-trips: the latency lever
+
+For an agent the model calls dominate task latency, not the desktop, so the real speedups are structural. `sequence` runs an ordered micro-plan (click, type, press enter, wait) in a single call, stopping the moment the desktop changes *structurally* in a way a step did not intend (a window opening, closing, or moving, an unexpected workspace switch, or a keyboard-grabbing launcher or lock screen; it deliberately ignores bare focus changes and notification popups). `then='desktop' | 'screenshot' | 'ui'` fuses a fresh view of the result into the acting call itself. `wait_for` blocks on real compositor events (a window or launcher opening, a title changing, a workspace switch, an urgency hint, screen-sharing starting) instead of sleeping and hoping.
+
+**Use it well:** collapse a known click/type/enter flow into one `sequence`. After typing into a form, add `then='ui'` to read the effect back in a few hundred exact tokens instead of a screenshot. After a launch or a shortcut that opens something, `wait_for` the event rather than sleeping.
+
+### 5. Safe delegation: trust layers
+
+hypruse hands an agent your real seat, so it ships the controls to bound what that agent can do. Beyond the always-on approval prompts and the Waybar activity beacon, opt-in env flags narrow what an agent can touch: `HYPRUSE_READONLY` exposes only the observation tools; `HYPRUSE_CONFINE` restricts input to the windows the agent launched, or a class/workspace allowlist; `HYPRUSE_AUTH_GUARD` (on by default) refuses to drive authentication dialogs; `HYPRUSE_STRICT` refuses to act if you took the seat back; `HYPRUSE_MARK` tags agent-owned windows and announces when the agent opens a window or captures the screen.
+
+**Use it well:** run read-only for the first week. When you trust a workflow, allowlist its tools and, if you want to walk away, confine the agent to a scope so your password manager on another workspace stays untouchable. Keep a panic bind handy (`hypruse stop`, or `pkill -f hypruse`). The [Security model](#security-model) has the full story.
+
 ## Install
 
 Requirements: Hyprland, `grim`, `wtype` (most Hyprland setups already have both), and [uv](https://docs.astral.sh/uv/). The accessibility tools (`ui`/`marks`/`click_ui`) use `busctl`, which ships with systemd. Optional: `wl-clipboard` for the opt-in clipboard tool, `imagemagick` for numbered `marks` captures.
