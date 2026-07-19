@@ -640,6 +640,37 @@ def _addr(target: str) -> str:
     return f"address:{target}"
 
 
+_CLOSE_WAIT_S = 1.0
+
+
+def _close_and_confirm(target: str) -> str:
+    """Dispatch closewindow and wait, briefly, for the compositor to report
+    the destroy. closewindow only ASKS the app to close (it may not comply
+    at all: an unsaved-changes prompt), so an immediate `then` observation
+    would still list the window and the strict seat baseline would capture
+    a focus about to vanish. Subscribes before dispatching so the event
+    cannot slip past; degrades to fire-and-forget without the socket."""
+    addr = _addr(target)
+    try:
+        stream = events.EventStream()
+    except events.EventError:
+        hyprctl.dispatch("closewindow", addr)
+        return f"asked {target} to close"
+    with stream:
+        hyprctl.dispatch("closewindow", addr)
+        hit = stream.wait_for(
+            {"closewindow"},
+            lambda _n, p: str(p.get("address", "")).lower() == target.lower(),
+            _CLOSE_WAIT_S,
+        )
+    if hit is None:
+        return (
+            f"asked {target} to close, but it is still open after "
+            f"{_CLOSE_WAIT_S:.0f}s (it may be prompting to save)"
+        )
+    return f"closed {target}"
+
+
 def hypr(action: str, target: str = "", workspace: str = "", then: str = "none") -> list[Any] | str:
     """Window/workspace ops over IPC (instant, no vision).
     action='workspace' (workspace: number/name/'special:name') |
@@ -675,8 +706,7 @@ def hypr(action: str, target: str = "", workspace: str = "", then: str = "none")
         hyprctl.dispatch("movetoworkspacesilent", f"{workspace},{_addr(target)}")
         msg = f"moved {target} to workspace {workspace}"
     elif action == "close_window":
-        hyprctl.dispatch("closewindow", _addr(target))
-        msg = f"asked {target} to close"
+        msg = _close_and_confirm(target)
     elif action == "fullscreen":
         if target:
             hyprctl.dispatch("focuswindow", _addr(target))
