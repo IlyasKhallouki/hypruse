@@ -6,6 +6,53 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Fixed
+- `HYPRUSE_STRICT` no longer locks up permanently after a human touches
+  the seat. The guard's own error says "re-read desktop()/screenshot()
+  and retry", but no read ever re-baselined the seat, so once tripped it
+  refused every action for the rest of the session. Every observation of
+  current state (`desktop`, the `screenshot`/`zoom` capture path, `ui`,
+  `marks`) now re-arms the guard, making the documented recovery real.
+  The guard also fails closed when the seat cannot be read at all,
+  matching the trust layers' fail-toward-less-action invariant.
+- `hypr close_window` with a `then=` observation no longer snapshots
+  before the destroy lands (the observation used to still list the
+  window it had just closed). It subscribes to the event socket before
+  dispatching and waits, up to 1s, for the compositor to report the
+  close; a window that will not close (an unsaved-changes prompt) is
+  reported honestly instead of claimed closed, and a socket dying
+  mid-confirmation degrades to a note rather than a tool error.
+- `wait_for('layer_open')` gained a level-triggered pre-check: a
+  launcher that mapped before the wait subscribed (the
+  use_bind-then-wait pattern) satisfies the wait immediately instead of
+  timing out forever. Filtered waits only, like the workspace pre-check.
+  `layer_close` deliberately gets no pre-check: "nothing matching is
+  mapped" also describes a layer that has not opened yet, and a wrong
+  "already closed" is worse than an honest timeout.
+- Input aimed under a focus-stealing layer surface (launcher, lock
+  screen, on-screen keyboard) stops being reported as success the
+  target never saw. `click_ui` refuses when such a layer covers the
+  click point; `pointer` appends a warning naming the layer (clicking
+  INTO a launcher is the legitimate way to drive one); `keyboard`
+  refuses a window-targeted type while a launcher holds the keyboard
+  grab, refuses typing under a lock screen outright (it is a credential
+  prompt; `allow_auth=true` overrides), and annotates window-less
+  typing with where the keys really went.
+- `click_ui` with `then='ui'` observes the clicked window, not whatever
+  window holds focus after the click (a spawned dialog could steal it).
+- `wait_for('title_change')` waits on `windowtitlev2` only: the
+  address-only `windowtitle` event could never satisfy a title match,
+  and an unfiltered wait could return a payload with no title in it.
+  Needs Hyprland >= 0.40 (mid-2024), which introduced the v2 event.
+- `marks` now flashes the same `HYPRUSE_MARK` capture notice as
+  `screenshot`/`zoom` (it takes a real capture and was silent).
+
+### Changed
+- Read-only mode ships its own server instructions and observation-tool
+  descriptions covering only the observation workflow, instead of the
+  full-surface text that kept advertising the seven stripped acting
+  tools (`click_ui`, `sequence`, `use_bind`, ...).
+
 ## [0.9.2] - 2026-07-19
 
 ### Fixed

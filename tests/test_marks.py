@@ -186,11 +186,15 @@ def test_click_ui_then_ui_observes_the_clicked_window(wired, monkeypatch):
 def test_click_ui_refuses_under_a_focus_stealing_layer(wired, monkeypatch):
     # a launcher over the point would swallow the click while the result
     # claimed success; the refusal must come before any side effect
-    monkeypatch.setattr(
-        srv.trust, "covering_layer",
-        lambda x, y: {"namespace": "rofi", "kind": "launcher"},
-    )
+    probed = []
+
+    def covering(x, y):
+        probed.append((x, y))
+        return {"namespace": "rofi", "kind": "launcher"}
+
+    monkeypatch.setattr(srv.trust, "covering_layer", covering)
     with pytest.raises(srv.trust.TrustError, match="rofi"):
         srv.click_ui(name="Save")
+    assert probed == [(150, 80)]  # the guard checked the ACTUAL click point
     assert wired["clicks"] == []
     assert wired["dispatch"] == []  # not even focused

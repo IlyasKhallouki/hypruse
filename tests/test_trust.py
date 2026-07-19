@@ -359,3 +359,65 @@ def test_guard_covering_layer_refuses_with_the_layer_named(monkeypatch):
     with pytest.raises(trust.TrustError, match="rofi"):
         trust.guard_covering_layer(600, 350)
     trust.guard_covering_layer(600, 900)  # uncovered point: no raise
+
+
+def test_covering_layer_skips_partial_geometry(monkeypatch):
+    # hyprctl can report a surface without w/h; skip it, never TypeError
+    raw = {"DP-1": {"levels": {"3": [{"namespace": "rofi", "x": 0, "y": 0}]}}}
+    monkeypatch.setattr(trust.hyprctl, "query", lambda cmd: raw)
+    assert trust.covering_layer(5, 5) is None
+
+
+# --- keyboard-grabbing layers -------------------------------------------------
+
+
+LOCK_RAW = {
+    "DP-1": {
+        "levels": {"3": [{"namespace": "hyprlock", "x": 0, "y": 0, "w": 1920, "h": 1080}]}
+    }
+}
+
+
+def test_guard_keyboard_layer_quiet_without_grabbers(monkeypatch):
+    # bars and notification popups do not hold the keyboard
+    raw = {"DP-1": {"levels": {"2": [{"namespace": "waybar", "x": 0, "y": 0,
+                                      "w": 1920, "h": 30}]}}}
+    monkeypatch.setattr(trust.hyprctl, "query", lambda cmd: raw)
+    assert trust.guard_keyboard_layer(True, False) == ""
+
+
+def test_guard_keyboard_layer_refuses_window_target_under_launcher(monkeypatch):
+    # keyboard(window=X) promises keys land in X; a launcher's grab makes
+    # that promise false, so it must refuse rather than type into rofi
+    monkeypatch.setattr(trust.hyprctl, "query", lambda cmd: LAYERS_RAW)
+    with pytest.raises(trust.TrustError, match="rofi"):
+        trust.guard_keyboard_layer(True, False)
+
+
+def test_guard_keyboard_layer_notes_windowless_typing_into_launcher(monkeypatch):
+    # typing with no window while a launcher is up is the legitimate way
+    # to drive one: allowed, but the result must say where the keys went
+    monkeypatch.setattr(trust.hyprctl, "query", lambda cmd: LAYERS_RAW)
+    note = trust.guard_keyboard_layer(False, False)
+    assert "rofi" in note and "keyboard grab" in note
+
+
+def test_guard_keyboard_layer_lock_screen_refuses_even_windowless(monkeypatch):
+    # a lock screen's focused control is a credential prompt
+    monkeypatch.setattr(trust.hyprctl, "query", lambda cmd: LOCK_RAW)
+    with pytest.raises(trust.TrustError, match="hyprlock"):
+        trust.guard_keyboard_layer(False, False)
+
+
+def test_guard_keyboard_layer_lock_allow_auth_downgrades_to_note(monkeypatch):
+    monkeypatch.setattr(trust.hyprctl, "query", lambda cmd: LOCK_RAW)
+    note = trust.guard_keyboard_layer(False, True)
+    assert "hyprlock" in note
+
+
+def test_guard_keyboard_layer_fails_open_on_unreadable_layers(monkeypatch):
+    def boom(cmd):
+        raise trust.hyprctl.HyprctlError("hyprctl down")
+
+    monkeypatch.setattr(trust.hyprctl, "query", boom)
+    assert trust.guard_keyboard_layer(True, False) == ""

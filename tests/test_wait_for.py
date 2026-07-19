@@ -1,5 +1,7 @@
 """wait_for: level-triggered pre-checks vs edge-triggered waits."""
 
+import pytest
+
 from hypruse import server as srv
 
 
@@ -85,16 +87,18 @@ def test_layer_open_not_yet_mapped_subscribes(monkeypatch):
     assert len(stream.calls) == 1  # it actually subscribed and waited
 
 
-def test_layer_close_already_gone(monkeypatch):
+@pytest.mark.parametrize("layers_state", [{}, LAYERS_RAW])
+def test_layer_close_never_answers_from_state(monkeypatch, layers_state):
+    # 'nothing matching is mapped' also describes a layer whose trigger
+    # fired but whose surface has not mapped yet, so layer_close must
+    # always subscribe and wait for the real event, whatever the state
     monkeypatch.setattr(srv.safety, "touch", lambda *a: None)
-    monkeypatch.setattr(srv.hyprctl, "query", lambda cmd: {})
-
-    def boom():
-        raise AssertionError("must not subscribe when already satisfied")
-
-    monkeypatch.setattr(srv.events, "EventStream", boom)
+    monkeypatch.setattr(srv.hyprctl, "query", lambda cmd: layers_state)
+    stream = OneShotStream(("closelayer", {"namespace": "rofi"}))
+    monkeypatch.setattr(srv.events, "EventStream", lambda: stream)
     out = srv.wait_for("layer_close", match="rofi")
-    assert out.get("already") is True
+    assert out == {"event": "closelayer", "namespace": "rofi"}
+    assert len(stream.calls) == 1  # subscribed, did not answer from state
 
 
 def test_unfiltered_layer_open_still_waits(monkeypatch):

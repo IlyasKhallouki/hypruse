@@ -153,26 +153,59 @@ def test_capture_rebaselines_the_strict_seat_guard(monkeypatch):
     srv.trust.guard_seat()  # re-armed: no raise
 
 
-def test_pointer_click_warns_under_a_focus_stealing_layer(monkeypatch):
-    # pointer may legitimately aim at the layer itself (that is how a
-    # launcher is driven), so it warns instead of refusing, and the
-    # warning tells the truth about where the input went
+def _pointer_wired(monkeypatch, covering):
     monkeypatch.setattr(srv.safety, "touch", lambda *a: None)
     monkeypatch.setattr(srv.trust, "guard_pointer", lambda *a, **k: None)
-    monkeypatch.setattr(
-        srv.trust, "covering_layer",
-        lambda x, y: {"namespace": "rofi", "kind": "launcher"},
-    )
+    monkeypatch.setattr(srv.trust, "covering_layer", covering)
     monkeypatch.setattr(srv.hinput, "click", lambda *a, **k: None)
+    monkeypatch.setattr(srv.hinput, "drag", lambda *a, **k: None)
+    monkeypatch.setattr(srv.hinput, "scroll", lambda *a, **k: None)
     monkeypatch.setattr(srv.hyprctl, "cursor_pos", lambda: (600, 350))
-    out = srv.pointer("click", x=600, y=350)
+
+
+@pytest.mark.parametrize(
+    "action,extra",
+    [
+        ("click", {}),
+        ("scroll", {"scroll_dy": 3}),
+        ("drag", {"to_x": 700, "to_y": 400}),
+    ],
+)
+def test_pointer_warns_under_a_focus_stealing_layer(monkeypatch, action, extra):
+    # pointer may legitimately aim at the layer itself (that is how a
+    # launcher is driven), so every input-delivering arm warns instead of
+    # refusing, and the warning tells the truth about where the input went
+    _pointer_wired(
+        monkeypatch, lambda x, y: {"namespace": "rofi", "kind": "launcher"}
+    )
+    out = srv.pointer(action, x=600, y=350, **extra)
     assert "rofi" in out and "not to any window beneath" in out
 
 
 def test_pointer_click_is_silent_without_a_covering_layer(monkeypatch):
-    monkeypatch.setattr(srv.safety, "touch", lambda *a: None)
-    monkeypatch.setattr(srv.trust, "guard_pointer", lambda *a, **k: None)
-    monkeypatch.setattr(srv.trust, "covering_layer", lambda x, y: None)
-    monkeypatch.setattr(srv.hinput, "click", lambda *a, **k: None)
-    monkeypatch.setattr(srv.hyprctl, "cursor_pos", lambda: (600, 350))
+    _pointer_wired(monkeypatch, lambda x, y: None)
     assert srv.pointer("click", x=600, y=350) == "click ok; cursor now at (600, 350)"
+
+
+def test_pointer_coordinate_less_click_resolves_cursor_for_the_note(monkeypatch):
+    # a click with no x/y lands at the current cursor; the layer note must
+    # check THAT point, not skip
+    probed = []
+
+    def covering(x, y):
+        probed.append((x, y))
+        return {"namespace": "rofi", "kind": "launcher"}
+
+    _pointer_wired(monkeypatch, covering)
+    out = srv.pointer("click")
+    assert probed == [(600, 350)]
+    assert "rofi" in out
+
+
+def test_layer_note_empty_when_cursor_unreadable(monkeypatch):
+    # best-effort: no cursor means no note, never an error blocking the click
+    def boom():
+        raise srv.hyprctl.HyprctlError("cursorpos timed out")
+
+    monkeypatch.setattr(srv.hyprctl, "cursor_pos", boom)
+    assert srv._layer_note(None, None) == ""

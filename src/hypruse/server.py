@@ -43,7 +43,7 @@ numbered screenshot plus legend when you want to SEE what is clickable,
 then `click_ui(mark=N)`). Use screenshot + zoom when the tree exposes
 nothing (terminals, canvas UIs, Electron/Chrome without a flag). To
 verify an effect without a second round-trip, pass `then='desktop'` (a
-fresh snapshot), `then='ui'` (the focused window's controls with current
+fresh snapshot), `then='ui'` (the acted-on window's controls with current
 values, cheapest after typing or toggling), or `then='screenshot'` to
 the acting call itself instead of calling `desktop` again. `binds` lists
 the owner's own keybinds; to run one, call
@@ -342,7 +342,9 @@ def ui(window: str = "", name: str = "", actionable: bool = True) -> list[Any] |
     Electron/Chrome without --force-renderer-accessibility, expose little
     or nothing); when it does not, fall back to screenshot + zoom."""
     safety.touch("ui")
-    return _ui_read(window, name, actionable)
+    view = _ui_read(window, name, actionable)
+    trust.remember_seat()  # a fresh read re-arms the strict seat guard
+    return view
 
 
 def _magick_exe() -> str | None:
@@ -408,6 +410,8 @@ def marks(window: str = "", name: str = "") -> list[Any] | str:
     if isinstance(elements, str):
         return elements
     data, meta = _grab_env(window=addr, stable=True)
+    trust.notify_capture()  # marks IS a capture: same HYPRUSE_MARK notice
+    trust.remember_seat()  # and the same strict-guard re-arm as screenshot
     ox, oy = meta["geometry"][0], meta["geometry"][1]
     scale = meta["scale"]
     ax, ay = client["at"]
@@ -571,6 +575,10 @@ def keyboard(
     safety.touch(f"keyboard:{action}")
     trust.guard_seat()
     addr_str = _addr(window) if window else ""  # validate the address format first
+    # a mapped launcher/lock layer holds the keyboard grab, so keys would
+    # go to it regardless of window focus: refuse when that breaks the
+    # caller's stated intent, otherwise report it honestly (see the guard)
+    note = trust.guard_keyboard_layer(bool(window), allow_auth)
     # resolve the window keystrokes will land in, for the confinement and
     # auth guards, but only when a guard is active (it costs a query). When
     # no window= is given we best-effort the focused one; a bare key (esc,
@@ -592,13 +600,13 @@ def keyboard(
             trust.guard_password_field(target, allow_auth)  # refuse typing a password
         hinput.type_text(text)
         trust.remember_seat()
-        return _acted(f"typed {len(text)} characters{into}", then)
+        return _acted(f"typed {len(text)} characters{into}{note}", then)
     if action == "key":
         if not keys:
             raise ValueError("key needs keys")
         hinput.key_combo(keys)
         trust.remember_seat()
-        return _acted(f"pressed {keys}{into}", then)
+        return _acted(f"pressed {keys}{into}{note}", then)
     raise ValueError(f"unknown action {action!r}: type|key")
 
 
@@ -710,11 +718,16 @@ def _close_and_confirm(target: str) -> str:
         return f"asked {target} to close"
     with stream:
         hyprctl.dispatch("closewindow", addr)
-        hit = stream.wait_for(
-            {"closewindow"},
-            lambda _n, p: str(p.get("address", "")).lower() == target.lower(),
-            _CLOSE_WAIT_S,
-        )
+        try:
+            hit = stream.wait_for(
+                {"closewindow"},
+                lambda _n, p: str(p.get("address", "")).lower() == target.lower(),
+                _CLOSE_WAIT_S,
+            )
+        except events.EventError:
+            # the dispatch already fired; a socket dying mid-wait must not
+            # turn a (probably successful) close into a tool error
+            return f"asked {target} to close (event socket dropped before confirming)"
     if hit is None:
         return (
             f"asked {target} to close, but it is still open after "
@@ -958,12 +971,18 @@ def _already_satisfied(event: str, needle: str) -> dict[str, Any] | None:
         name = str(ws.get("name", ""))
         if needle in name.lower():
             return {"event": "workspace", "name": name, "already": True}
-    # layer waits are the classic late-subscribe case: use_bind returns,
-    # the launcher maps instantly, and only then does the agent call
+    # layer_open is the classic late-subscribe case: use_bind returns, the
+    # launcher maps instantly, and only then does the agent call
     # wait_for(layer_open); without this check that wait can never succeed.
     # Filtered only, like workspace: some layer (a bar) is always mapped,
     # so an unfiltered pre-check would answer instantly without waiting.
-    if event in ("layer_open", "layer_close") and needle:
+    # layer_close deliberately has NO pre-check: 'nothing matching is
+    # mapped' also describes a layer whose trigger fired but whose surface
+    # has not mapped yet, and answering 'already closed' there acts on
+    # false state (inside sequence the trigger-to-wait gap is only the
+    # 0.2s settle, well under a launcher's startup); a late-subscribed
+    # close wait times out honestly instead.
+    if event == "layer_open" and needle:
         mapped = next(
             (
                 s
@@ -972,10 +991,8 @@ def _already_satisfied(event: str, needle: str) -> dict[str, Any] | None:
             ),
             None,
         )
-        if event == "layer_open" and mapped is not None:
+        if mapped is not None:
             return {"event": "openlayer", "namespace": mapped["namespace"], "already": True}
-        if event == "layer_close" and mapped is None:
-            return {"event": "closelayer", "already": True}
     return None
 
 
@@ -988,8 +1005,12 @@ def wait_for(event: str, match: str = "", timeout_s: float = 10) -> dict[str, An
     started/stopped). match: optional case-insensitive substring filter
     over the event's fields (class/title/workspace name/address/namespace).
     timeout_s 1-60, default 10. Returns the event payload, or a timeout
-    note. Use it after actions with delayed effects: app startups, page
-    loads that change a window title, a launcher bind that pops a layer."""
+    note; a filtered wait whose condition ALREADY holds (the window is
+    already gone, the workspace already active, the layer already mapped)
+    returns instantly with `already: true` instead of missing an event
+    that fired before it could subscribe. Use it after actions with
+    delayed effects: app startups, page loads that change a window title,
+    a launcher bind that pops a layer."""
     names = _WAIT_EVENTS.get(event)
     if names is None:
         raise ValueError(f"unknown event {event!r}: {'|'.join(_WAIT_EVENTS)}")

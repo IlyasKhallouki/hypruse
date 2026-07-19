@@ -90,7 +90,18 @@ guarding it seeds the owned-set (`note_launched`). A guard raises
 `TrustError`, which becomes the tool's error; every guard fails toward
 *less* action (an unresolved target or a malformed scope refuses rather
 than proceeds). `remember_seat` runs after an acting tool moves the seat so
-the next `guard_seat` has a fresh baseline. The guards are the confinement
+the next `guard_seat` has a fresh baseline; the observation tools that
+show current state (`desktop`, `screenshot`/`zoom` captures, `ui`,
+`marks`) re-baseline too, so a tripped strict guard recovers when the
+agent re-observes. Two always-on companion checks cover what the
+window-based guards cannot see, since layer surfaces never appear in
+`clients`: a click aimed under a launcher, lock screen, or on-screen
+keyboard layer would silently land on the layer (`click_ui` refuses,
+`pointer` appends a warning naming the layer), and a launcher or lock
+screen holds the keyboard grab, so `keyboard` refuses a window-targeted
+type, refuses a lock screen outright (credential surface, `allow_auth`
+overrides), and annotates window-less typing with where the keys really
+went. The guards are the confinement
 path over the same happy path above: step 4 is refused if the point is over
 an out-of-scope or authentication window, step 2 if the target is out of
 scope.

@@ -62,3 +62,48 @@ def test_window_target_composes_with_then(stub, monkeypatch):
     out = srv.keyboard("type", text="hi", window="0xabc", then="desktop")
     assert isinstance(out, list)
     assert out[0].text == "typed 2 characters into 0xabc"
+
+
+LAUNCHER_LAYERS = {
+    "DP-1": {"levels": {"3": [{"namespace": "rofi", "x": 560, "y": 300,
+                               "w": 800, "h": 480}]}}
+}
+
+LOCK_LAYERS = {
+    "DP-1": {"levels": {"3": [{"namespace": "hyprlock", "x": 0, "y": 0,
+                               "w": 1920, "h": 1080}]}}
+}
+
+
+def _with_layers(monkeypatch, layers):
+    prev = srv.hyprctl.query
+    monkeypatch.setattr(
+        srv.hyprctl, "query", lambda cmd: layers if cmd == "layers" else prev(cmd)
+    )
+
+
+def test_keyboard_window_target_refused_while_launcher_grabs(stub, monkeypatch):
+    # keys go to the seat's keyboard focus, and rofi holds the grab no
+    # matter what focuswindow does: 'typed into 0xabc' would be a lie
+    _with_layers(monkeypatch, LAUNCHER_LAYERS)
+    with pytest.raises(srv.trust.TrustError, match="rofi"):
+        srv.keyboard("type", text="hi", window="0xabc")
+    assert stub["typed"] == []
+    assert stub["dispatch"] == []  # refused before even focusing
+
+
+def test_keyboard_windowless_drives_the_launcher_with_a_note(stub, monkeypatch):
+    _with_layers(monkeypatch, LAUNCHER_LAYERS)
+    out = srv.keyboard("type", text="firefox")
+    assert stub["typed"] == ["firefox"]
+    assert "rofi" in out and "keyboard grab" in out
+
+
+def test_keyboard_refused_under_a_lock_screen(stub, monkeypatch):
+    _with_layers(monkeypatch, LOCK_LAYERS)
+    with pytest.raises(srv.trust.TrustError, match="hyprlock"):
+        srv.keyboard("type", text="hunter2")
+    assert stub["typed"] == []
+    out = srv.keyboard("type", text="hunter2", allow_auth=True)  # human intent
+    assert stub["typed"] == ["hunter2"]
+    assert "hyprlock" in out

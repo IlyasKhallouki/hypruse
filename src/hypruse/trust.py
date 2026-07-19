@@ -20,8 +20,16 @@ toward LESS action, never more.
                       config for a guaranteed outline, since a runtime rule
                       does not render on every Hyprland version/config)
 
-The server calls the guard_* functions at the top of each acting tool; a
-raised TrustError becomes the tool's error, which the MCP client surfaces.
+The server calls the guard_* functions inside each acting tool; a raised
+TrustError becomes the tool's error, which the MCP client surfaces.
+
+Two checks are ALWAYS on, no env var, because they are truthfulness aids
+rather than opt-in policy: covering_layer/guard_covering_layer (a click
+aimed under a launcher/lock/on-screen-keyboard layer surface would land
+on the layer, not the window) and guard_keyboard_layer (a launcher or
+lock screen holds the keyboard grab, so synthetic keys go to it no
+matter which window was focused). Both are positive-detection and
+best-effort: unreadable layers never block anything.
 """
 
 from __future__ import annotations
@@ -259,6 +267,48 @@ def covering_layer(x: float, y: float) -> dict[str, Any] | None:
         ):
             return s
     return None
+
+
+def guard_keyboard_layer(window_given: bool, allow_auth: bool) -> str:
+    """Guard typing against a mapped keyboard-grabbing layer. Synthetic
+    keys go to the seat's KEYBOARD focus, and a launcher or lock screen
+    holds an exclusive grab no matter which window was focused over IPC,
+    so `keyboard(window=X)` would focus X and then type into the layer
+    while reporting 'typed into X'. Refusals, in order of severity:
+    a lock screen always refuses unless allow_auth (its focused control
+    is a credential prompt); a launcher refuses only when the caller
+    named a window (the 'keys land in that window' contract is provably
+    broken; typing with NO window while a launcher is up is the
+    legitimate way to drive one and instead earns the returned note,
+    appended to the tool result). The on-screen keyboard kind feeds keys
+    rather than eating them, so it does not count. Positive detection
+    and best-effort like covering_layer: unreadable layers yield ''."""
+    try:
+        surfaces = hyprctl.parse_layers(hyprctl.query("layers"))
+    except Exception:
+        return ""
+    grabbers = [s for s in surfaces if s.get("kind") in ("launcher", "lock")]
+    if not grabbers:
+        return ""
+    # a lock screen outranks a launcher when both are somehow mapped
+    grabber = next((s for s in grabbers if s["kind"] == "lock"), grabbers[0])
+    if grabber["kind"] == "lock" and not allow_auth:
+        raise TrustError(
+            f"the lock screen layer {grabber['namespace']!r} holds the keyboard: "
+            "typing now would feed a credential prompt. Pass allow_auth=true "
+            "only if a human intends that credential entry."
+        )
+    if grabber["kind"] != "lock" and window_given:
+        raise TrustError(
+            f"the {grabber['kind']} layer {grabber['namespace']!r} holds the "
+            "keyboard grab, so keys cannot reach the requested window. Drive "
+            "the launcher itself (call keyboard without window=), or close it "
+            "first (usually esc)."
+        )
+    return (
+        f"; NOTE: the {grabber['kind']} layer {grabber['namespace']!r} holds "
+        "the keyboard grab, so the keys went to it, not to the focused window"
+    )
 
 
 def guard_covering_layer(x: float, y: float) -> None:
