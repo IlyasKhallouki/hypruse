@@ -6,6 +6,34 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Added
+- Optional confinement and trust layers (`src/hypruse/trust.py`), each an
+  opt-in env flag that fails toward less action and composes with the
+  approval/beacon layers:
+  - `HYPRUSE_CONFINE` restricts input to a scope of windows: `launched`
+    (only windows hypruse opened this session, seeded from `launch`),
+    `class:a,b`, or `workspace:1,2`. Keyboard, `click_ui`, and `hypr`
+    window ops are refused outside scope; a `pointer` click is refused
+    when any window under the point is out of scope (Hyprland's client
+    list is not z-ordered, so it fails closed rather than guess the top
+    window). A malformed value refuses every action.
+  - `HYPRUSE_AUTH_GUARD` (default on) refuses to click or type into a
+    known authentication dialog (polkit agents, keyring prompt);
+    `=strict` also refuses typing into a password field detected in the
+    accessibility tree. A per-call `allow_auth=true` on `keyboard` /
+    `click_ui` overrides it and, changing the argument shape, surfaces in
+    the approval prompt.
+  - `HYPRUSE_STRICT` refuses to act when the cursor or focused window
+    moved since hypruse's last action (the seat was taken); the agent
+    must re-observe and retry.
+  - `HYPRUSE_MARK` borders agent-owned windows (a runtime `windowrulev2`
+    on a tag, torn down on exit) and flashes a rate-limited on-screen
+    notice on capture.
+- `hypruse stop` subcommand: an emergency stop that signals the running
+  server to shut down gracefully (releasing any held pointer button and
+  clearing the beacon), cleaner than `pkill` and safe to bind:
+  `bind = SUPER SHIFT, BackSpace, exec, hypruse stop`.
+
 ## [0.8.0] - 2026-07-19
 
 ### Added

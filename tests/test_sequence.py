@@ -370,6 +370,12 @@ def test_real_dispatch_wiring(monkeypatch):
     monkeypatch.setattr(srv.hinput, "type_text", lambda t: calls["typed"].append(t))
     monkeypatch.setattr(srv.hyprctl, "dispatch", lambda *a: calls["dispatch"].append(a))
     monkeypatch.setattr(srv.hyprctl, "cursor_pos", lambda: (3, 4))
+    _client = {"address": "0xabc", "class": "kitty", "pid": 1, "title": "t",
+               "at": [0, 0], "size": [9, 9], "workspace": {"id": 1}}
+    monkeypatch.setattr(
+        srv.hyprctl, "query",
+        lambda cmd: [_client] if cmd == "clients" else _client if cmd == "activewindow" else {},
+    )
     monkeypatch.setattr(srv.time, "sleep", lambda s: None)
     _stream(monkeypatch, [])
     steps = [

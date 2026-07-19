@@ -9,7 +9,20 @@ from hypruse import server as srv
 @pytest.fixture
 def stub(monkeypatch):
     calls = {"dispatch": [], "typed": [], "keys": [], "slept": []}
+    clients = [
+        {"address": "0xabc", "class": "kitty", "title": "t", "pid": 1,
+         "at": [0, 0], "size": [10, 10], "workspace": {"id": 1}},
+    ]
     monkeypatch.setattr(srv.safety, "touch", lambda *a: None)
+
+    def query(cmd):
+        if cmd == "clients":
+            return clients
+        if cmd == "activewindow":
+            return clients[0]
+        return {}
+
+    monkeypatch.setattr(srv.hyprctl, "query", query)
     monkeypatch.setattr(srv.hyprctl, "dispatch", lambda *a: calls["dispatch"].append(a))
     monkeypatch.setattr(srv.hinput, "type_text", lambda t: calls["typed"].append(t))
     monkeypatch.setattr(srv.hinput, "key_combo", lambda k: calls["keys"].append(k))

@@ -16,6 +16,7 @@ from __future__ import annotations
 import json
 import os
 import shutil
+import signal
 import subprocess
 import sys
 import time
@@ -198,14 +199,54 @@ def init(assume_yes: bool) -> int:
     return doctor()
 
 
+# --- stop (emergency) -------------------------------------------------------
+
+
+def stop() -> int:
+    """Emergency stop: signal a running hypruse server to shut down, which
+    releases any held pointer button and clears the beacon on the way out.
+    Cleaner than `pkill -f hypruse` (it targets the beacon's own pid and
+    triggers the graceful SIGTERM path), and safe to bind to a key:
+
+        bind = SUPER SHIFT, BackSpace, exec, hypruse stop
+    """
+    from hypruse import safety
+
+    path = safety.state_path()
+    if not path.exists():
+        print("no active hypruse session (no beacon found)")
+        return 0
+    try:
+        pid = int(json.loads(path.read_text()).get("pid"))
+    except (json.JSONDecodeError, TypeError, ValueError):
+        print(f"beacon at {path} is unreadable; run: pkill -f hypruse")
+        return 1
+    try:
+        os.kill(pid, signal.SIGTERM)
+    except ProcessLookupError:
+        import contextlib
+
+        with contextlib.suppress(OSError):
+            path.unlink()
+        print(f"hypruse pid {pid} was already gone; cleared the stale beacon")
+        return 0
+    except PermissionError:
+        print(f"not permitted to signal pid {pid}")
+        return 1
+    print(f"stopped hypruse (pid {pid})")
+    return 0
+
+
 # --- entry ------------------------------------------------------------------
 
 _USAGE = """\
-usage: hypruse [doctor | init [--yes] | --version]
+usage: hypruse [doctor | init [--yes] | stop | --version]
 
 no arguments   run the MCP stdio server (this is what MCP clients spawn)
 doctor         diagnose dependencies, session, protocols; exit 0 if green
 init           register hypruse in detected MCP clients, then run doctor
+stop           emergency stop: signal a running server to shut down safely
+               (bind it: bind = SUPER SHIFT, BackSpace, exec, hypruse stop)
 """
 
 
@@ -220,5 +261,7 @@ def main() -> None:
         sys.exit(doctor())
     if argv[0] == "init":
         sys.exit(init(assume_yes="--yes" in argv[1:]))
+    if argv[0] == "stop":
+        sys.exit(stop())
     print(_USAGE, file=sys.stderr)
     sys.exit(2)

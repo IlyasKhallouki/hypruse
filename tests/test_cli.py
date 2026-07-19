@@ -92,7 +92,47 @@ def test_main_dispatch(monkeypatch):
         cli.main()
     assert e.value.code == 0
 
+    monkeypatch.setattr(cli, "stop", lambda: 0)
+    monkeypatch.setattr(cli.sys, "argv", ["hypruse", "stop"])
+    with pytest.raises(SystemExit) as e:
+        cli.main()
+    assert e.value.code == 0
+
     monkeypatch.setattr(cli.sys, "argv", ["hypruse", "bogus"])
     with pytest.raises(SystemExit) as e:
         cli.main()
     assert e.value.code == 2
+
+
+def test_stop_no_beacon(tmp_path, monkeypatch, capsys):
+    monkeypatch.setenv("XDG_RUNTIME_DIR", str(tmp_path))
+    assert cli.stop() == 0
+    assert "no active hypruse session" in capsys.readouterr().out
+
+
+def test_stop_signals_beacon_pid(tmp_path, monkeypatch, capsys):
+    monkeypatch.setenv("XDG_RUNTIME_DIR", str(tmp_path))
+    d = tmp_path / "hypruse"
+    d.mkdir()
+    (d / "state.json").write_text(json.dumps({"pid": 4242, "started": 1}))
+    killed = []
+    monkeypatch.setattr(cli.os, "kill", lambda pid, sig: killed.append((pid, sig)))
+    assert cli.stop() == 0
+    assert killed == [(4242, cli.signal.SIGTERM)]
+    assert "stopped hypruse (pid 4242)" in capsys.readouterr().out
+
+
+def test_stop_clears_stale_beacon(tmp_path, monkeypatch, capsys):
+    monkeypatch.setenv("XDG_RUNTIME_DIR", str(tmp_path))
+    d = tmp_path / "hypruse"
+    d.mkdir()
+    beacon = d / "state.json"
+    beacon.write_text(json.dumps({"pid": 999999, "started": 1}))
+
+    def gone(pid, sig):
+        raise ProcessLookupError
+
+    monkeypatch.setattr(cli.os, "kill", gone)
+    assert cli.stop() == 0
+    assert "already gone" in capsys.readouterr().out
+    assert not beacon.exists()

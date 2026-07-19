@@ -24,7 +24,7 @@ from typing import Any
 from mcp.server.fastmcp import FastMCP
 from mcp.types import ImageContent, TextContent
 
-from hypruse import __version__, a11y, events, hyprctl, safety, session
+from hypruse import __version__, a11y, events, hyprctl, safety, session, trust
 from hypruse import clipboard as clip
 from hypruse import input as hinput
 from hypruse import screenshot as shot
@@ -85,7 +85,7 @@ CLIPBOARD = os.environ.get("HYPRUSE_CLIPBOARD", "").lower() in ("1", "true", "ye
 _READONLY_NOTE = """
 
 READ-ONLY MODE is active: only observation tools are available
-(desktop, screenshot, zoom, ui, binds, wait_for). Input,
+(desktop, screenshot, zoom, ui, marks, binds, wait_for). Input,
 window-management, and use_bind are disabled by the user."""
 
 mcp = FastMCP("hypruse", instructions=INSTRUCTIONS + (_READONLY_NOTE if READONLY else ""))
@@ -174,6 +174,7 @@ def _deliver_capture(
 ) -> list[Any]:
     data, meta = _grab_env(window, region, scale=scale, stable=stable, lossless=lossless)
     meta.update(extra or {})
+    trust.notify_capture()  # HYPRUSE_MARK: flash an on-screen notice, rate-limited
     return _package(data, meta)
 
 
@@ -238,6 +239,14 @@ def _resolve_window(window: str) -> dict[str, Any]:
     if client is None:
         raise ValueError(f"window {target!r} not found, call desktop() for current addresses")
     return client
+
+
+def _active_client() -> dict[str, Any] | None:
+    """The focused window's client, or None when nothing is focused (a bare
+    key press must still work). Used by the trust guards."""
+    with contextlib.suppress(Exception):
+        return _resolve_window("active")
+    return None
 
 
 def _ui_read(window: str = "", name: str = "", actionable: bool = True) -> list[Any] | str:
@@ -324,7 +333,10 @@ def _draw_marks(
     if exe is None:
         return None
     d = _runtime_dir()
-    src, dst = d / f"marks-src.{fmt}", d / f"marks-out.{fmt}"
+    # unique per call: parallel tool calls run on worker threads, and fixed
+    # names would let two concurrent marks() clobber each other's temp image
+    stem = f"marks-{int(time.time() * 1000)}-{os.getpid()}-{id(points)}"
+    src, dst = d / f"{stem}-src.{fmt}", d / f"{stem}-out.{fmt}"
     src.write_bytes(data)
     args = [exe, str(src)]
     for mark, px, py in points:
@@ -453,6 +465,8 @@ def pointer(
     a stable capture, 'ui' the focused window's elements with current
     values, 'none' (default) nothing."""
     safety.touch(f"pointer:{action}")
+    trust.guard_seat()
+    trust.guard_point(x, y)  # confinement: refuse over an out-of-scope window
     if action == "move":
         if x is None or y is None:
             raise ValueError("move needs x and y")
@@ -462,16 +476,23 @@ def pointer(
     elif action == "drag":
         if None in (x, y, to_x, to_y):
             raise ValueError("drag needs x, y, to_x, to_y")
+        trust.guard_point(to_x, to_y)  # the drag ends elsewhere; confine that too
         hinput.drag(x, y, to_x, to_y, button=button)  # type: ignore[arg-type]
     elif action == "scroll":
         hinput.scroll(dy=scroll_dy, dx=scroll_dx, x=x, y=y)
     else:
         raise ValueError(f"unknown action {action!r}: move|click|drag|scroll")
+    trust.remember_seat()
     return _acted(f"{action} ok; cursor now at {hyprctl.cursor_pos()}", then)
 
 
 def keyboard(
-    action: str, text: str = "", keys: str = "", window: str = "", then: str = "none"
+    action: str,
+    text: str = "",
+    keys: str = "",
+    window: str = "",
+    then: str = "none",
+    allow_auth: bool = False,
 ) -> list[Any] | str:
     """Keyboard to the focused app. action='type' (text, unicode-safe) |
     'key' (keys combo: 'ctrl+shift+t', 'esc', 'F5'; aliases
@@ -482,21 +503,39 @@ def keyboard(
     (ctrl+t, ctrl+l). It does NOT trigger Hyprland's own keybinds
     (super+...): those go through `use_bind`, and workspace/window actions
     through `hypr`. `then` ('desktop'|'screenshot'|'ui'|'none') appends the
-    result to this call."""
+    result to this call. `allow_auth=true` overrides the default refusal to
+    type into a password field or a system authentication dialog (only when
+    a human intends that credential entry)."""
     safety.touch(f"keyboard:{action}")
+    trust.guard_seat()
+    addr_str = _addr(window) if window else ""  # validate the address format first
+    # resolve the window keystrokes will land in, for the confinement and
+    # auth guards, but only when a guard is active (it costs a query). When
+    # no window= is given we best-effort the focused one; a bare key (esc,
+    # F5) with nothing focused must still work.
+    target = None
+    if trust.guards_window_input():
+        target = _resolve_window(window) if window else _active_client()
+        if target is not None:
+            trust.guard_client(target)  # confinement
+            trust.guard_auth_client(target, allow_auth)
     if window:
-        hyprctl.dispatch("focuswindow", _addr(window))
+        hyprctl.dispatch("focuswindow", addr_str)
         time.sleep(0.05)  # let keyboard focus settle before typing into it
     into = f" into {window}" if window else ""
     if action == "type":
         if not text:
             raise ValueError("type needs text")
+        if target is not None:
+            trust.guard_password_field(target, allow_auth)  # refuse typing a password
         hinput.type_text(text)
+        trust.remember_seat()
         return _acted(f"typed {len(text)} characters{into}", then)
     if action == "key":
         if not keys:
             raise ValueError("key needs keys")
         hinput.key_combo(keys)
+        trust.remember_seat()
         return _acted(f"pressed {keys}{into}", then)
     raise ValueError(f"unknown action {action!r}: type|key")
 
@@ -509,6 +548,7 @@ def click_ui(
     button: str = "left",
     double: bool = False,
     then: str = "none",
+    allow_auth: bool = False,
 ) -> list[Any] | str:
     """Click a control by its accessible NAME, or by a `mark` number from
     the last `marks` capture, in ONE call: the exact coordinate comes from
@@ -521,8 +561,11 @@ def click_ui(
     into that list) or a more specific name. Falls back with a note when
     the app exposes no tree (use screenshot + zoom + pointer then).
     `then` ('desktop'|'screenshot'|'ui'|'none') appends the result;
-    'ui' shows the click's effect on the controls in the same call."""
+    'ui' shows the click's effect on the controls in the same call.
+    `allow_auth=true` overrides the refusal to click a system
+    authentication dialog."""
     safety.touch("click_ui")
+    trust.guard_seat()
     if bool(name) == bool(mark):
         raise ValueError("pass exactly one of `name` or `mark`")
     if mark:
@@ -558,9 +601,12 @@ def click_ui(
         e = pool[0]
         x, y = e["x"], e["y"]
         desc = f"{e['role']} {e['name']!r}"
+    trust.guard_client(client)  # confinement
+    trust.guard_auth_client(client, allow_auth)
     hyprctl.dispatch("focuswindow", f"address:{client['address']}")
     time.sleep(0.05)  # focus (and a possible workspace switch) settles first
     hinput.click(x, y, button=button, double=double)
+    trust.remember_seat()
     return _acted(f"clicked {desc} at ({x}, {y}) in {client.get('class', '')}", then)
 
 
@@ -583,6 +629,9 @@ def hypr(action: str, target: str = "", workspace: str = "", then: str = "none")
     'toggle_floating' (target?). `then` ('desktop'|'screenshot'|'ui'|'none')
     appends the result to this call."""
     safety.touch(f"hypr:{action}")
+    # confinement: any action naming a specific window must stay in scope
+    if target and action != "workspace":
+        trust.guard_window(target)
     if action == "workspace":
         if not workspace:
             raise ValueError("workspace action needs `workspace`")
@@ -673,6 +722,7 @@ def launch(command: str, workspace: str = "", wait_s: float = 8.0) -> dict[str, 
             "single-instance apps may open late and on their own workspace; call "
             "desktop() to find the window, then hypr move_window if needed"
         )
+    trust.note_launched(win["address"])  # owned-set for `launched` confinement + border
     ws = win.get("workspace", {})
     result: dict[str, Any] = {
         "address": win["address"],
@@ -973,8 +1023,8 @@ def sequence(
 ) -> list[Any] | str:
     """Run an ordered list of actions in ONE call, so a click/type/enter
     micro-sequence costs one round-trip instead of several. Each step is
-    {"op": "pointer"|"keyboard"|"hypr"|"wait_for", ...that tool's args},
-    e.g. [{"op":"pointer","action":"click","x":800,"y":60},
+    {"op": "pointer"|"keyboard"|"click_ui"|"hypr"|"wait_for", ...that tool's
+    args}, e.g. [{"op":"pointer","action":"click","x":800,"y":60},
     {"op":"keyboard","action":"type","text":"hello","window":"0x.."},
     {"op":"keyboard","action":"key","keys":"enter"}]. With stop_on_change
     (default) the run stops, best-effort, when it notices a STRUCTURAL
@@ -1067,8 +1117,8 @@ def sequence(
 
 
 # Acting tools register only outside read-only mode; observation tools
-# (desktop, screenshot, zoom, ui, binds, wait_for) are decorated above and
-# always on. Clipboard is double-gated: opt-in env flag, never read-only.
+# (desktop, screenshot, zoom, ui, marks, binds, wait_for) are decorated
+# above and always on. Clipboard is double-gated: opt-in env, never read-only.
 if not READONLY:
     for _acting_tool in (pointer, keyboard, click_ui, hypr, launch, use_bind, sequence):
         mcp.tool()(_acting_tool)
@@ -1089,6 +1139,7 @@ def main() -> None:
     session.ensure_session_env()
     safety.init()
     safety.on_shutdown(hinput.release_held)  # kill switch mid-drag: release first
+    trust.init_marking()  # HYPRUSE_MARK: border owned windows, remove rule on exit
     mcp.run()
 
 

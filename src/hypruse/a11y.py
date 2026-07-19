@@ -39,6 +39,9 @@ COORD_WINDOW = 1  # ATSPI_COORD_TYPE_WINDOW: extents relative to the toplevel
 
 # AtspiStateType bit positions (GetState returns a 2-word uint32 bitfield)
 _STATE_ENABLED, _STATE_SENSITIVE, _STATE_SHOWING, _STATE_VISIBLE = 8, 24, 25, 30
+_STATE_FOCUSED = 12
+
+PASSWORD_ROLE = 40  # AtspiRole PASSWORD_TEXT: never read, never type without consent
 
 # Window-relative coordinates beyond this are toolkit noise, not geometry
 _EXTENT_SANITY = 20000
@@ -355,6 +358,25 @@ def find_elements(
         )
     truncated = visited >= max_nodes and bool(stack) and len(results) < max_results
     return results, truncated
+
+
+def focused_role(bus: Bus, app_svc: str, app_path: str, max_nodes: int = 200) -> int | None:
+    """The AtspiRole number of the element that currently holds keyboard
+    focus in this window, or None if none is found within the node budget.
+    Bounded because it runs before typing: a fast, best-effort check for the
+    auth guard, not an exhaustive walk. Prunes into non-showing subtrees so
+    it does not spend the budget on hidden pages."""
+    stack: list[tuple[str, str]] = [(app_svc, app_path)]
+    visited = 0
+    while stack and visited < max_nodes:
+        svc, path = stack.pop()
+        visited += 1
+        states = _states(bus, svc, path)
+        if _STATE_FOCUSED in states:
+            return _role_num(bus, svc, path)
+        if _STATE_SHOWING in states or (svc, path) == (app_svc, app_path):
+            stack.extend(reversed(_children(bus, svc, path)))
+    return None
 
 
 def do_action(bus: Bus, svc: str, path: str, index: int = 0) -> bool:

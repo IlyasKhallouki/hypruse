@@ -52,11 +52,11 @@ Design decisions:
 | `launch` | Start an app (optionally silent on another workspace), block on its actual `openwindow` event, return its address; detects single-instance apps (browsers) whose window ignores exec rules and moves it to the requested workspace |
 | `binds` | The user's own keybinds, decoded (`SUPER+Q`, action, description); the agent runs one with `use_bind` |
 | `use_bind` | Execute a keybind by combo (`SUPER+F`), running its bound action, so the agent drives the owner's own launchers and shortcuts |
-| `sequence` | Run an ordered list of actions (pointer/keyboard/hypr/wait_for) in one call; stops the moment the desktop changes in a way the current step did not expect, so a click/type/enter micro-sequence costs one round-trip instead of several |
+| `sequence` | Run an ordered list of actions (pointer/keyboard/click_ui/hypr/wait_for) in one call; stops the moment the desktop changes in a way the current step did not expect, so a click/type/enter micro-sequence costs one round-trip instead of several |
 | `wait_for` | Block on real compositor events (window open/close, workspace change, title change, layer surfaces appearing/closing, urgency, screen sharing on/off) with a match filter and timeout; replaces sleep-and-hope in multi-step automations |
 | `clipboard` | Read or write the text clipboard via `wl-clipboard`; opt-in, exists only with `HYPRUSE_CLIPBOARD=1` in the server env |
 
-The acting tools (`pointer`, `keyboard`, `hypr`, `use_bind`, `sequence`) take an optional `then` argument that appends the result to the same call, so the agent sees the effect without a second round-trip: `then='desktop'` adds a fresh semantic snapshot (~25 ms, cheap, best for window/focus changes), `then='screenshot'` a stable capture (best for visual changes), `then='none'` nothing (the default everywhere except `sequence`, which defaults to `'desktop'`).
+The acting tools (`pointer`, `keyboard`, `click_ui`, `hypr`, `use_bind`, `sequence`) take an optional `then` argument that appends the result to the same call, so the agent sees the effect without a second round-trip: `then='desktop'` adds a fresh semantic snapshot (~25 ms, cheap, best for window/focus changes), `then='screenshot'` a stable capture (best for visual changes), `then='ui'` the focused window's controls with their current values (a few hundred exact tokens, best after typing or toggling), `then='none'` nothing (the default everywhere except `sequence`, which defaults to `'desktop'`).
 
 ## Install
 
@@ -89,7 +89,7 @@ claude mcp add -s user hypruse -- uv run --directory /path/to/hypruse hypruse
 
 Any other MCP client: run `uvx hypruse` as a stdio server.
 
-**Read-only mode:** set `HYPRUSE_READONLY=1` in the server config to expose only the observation tools (`desktop`, `screenshot`, `zoom`, `ui`, `binds`, `wait_for`). The agent can see and narrate but cannot click, type, or launch. A good first week.
+**Read-only mode:** set `HYPRUSE_READONLY=1` in the server config to expose only the observation tools (`desktop`, `screenshot`, `zoom`, `ui`, `marks`, `binds`, `wait_for`). The agent can see and narrate but cannot click, type, or launch. A good first week.
 
 ### Claude Desktop (Linux beta)
 
@@ -115,10 +115,19 @@ Read this section before installing. **hypruse hands an agent your mouse, your k
 
 1. **Approval:** MCP clients gate tool calls. In Claude Code, allowlist the read-only tools (`desktop`, `screenshot`) and leave `pointer`/`keyboard`/`hypr`/`launch` on ask-first until you trust a workflow.
 2. **Visibility:** the server maintains an activity beacon (`$XDG_RUNTIME_DIR/hypruse/state.json`); the shipped [Waybar module](waybar/) is invisible when idle and shows a robot indicator while an agent has hands on your desktop.
-3. **Interruption:** click the indicator, or bind a panic key: `bind = SUPER SHIFT, BackSpace, exec, pkill -f hypruse`. Killing it mid-action is safe: button press/release pairs never span tool calls, so it cannot die holding a button.
+3. **Interruption:** click the indicator, or bind a panic key: `bind = SUPER SHIFT, BackSpace, exec, hypruse stop`. `hypruse stop` signals the running server to shut down gracefully, which releases any held pointer button and clears the beacon (cleaner than `pkill -f hypruse`, which also works). Killing it mid-action is safe: button press/release pairs never span tool calls, and even a long drag's held button is released on the way out.
 4. **The seat is shared.** There is one cursor and one keyboard focus, and Hyprland's focus-follows-mouse means a cursor move alone can retarget keystrokes. Don't type while an agent is driving; watch the indicator.
 5. **Scope:** stdio only (no network listener), nothing persisted except the beacon and the capped screenshot cache in `$XDG_RUNTIME_DIR` (tmpfs, newest 20), and no clipboard access unless you opt in: `HYPRUSE_CLIPBOARD=1` registers a `clipboard` tool (never in read-only mode); clipboards hold passwords, so leave it off unless a workflow needs it. A screenshot sees everything visible: treat an agent session like screen sharing.
 6. **What the agent reads is untrusted.** Window titles, accessibility names and values, and clipboard text flow verbatim into the agent's context, and any web page, filename, or document can put instructions there (prompt injection). hypruse cannot sanitize meaning, so the approval layer is the backstop: keep consequential tools (`launch`, `keyboard`, `clipboard`) on ask-first when the agent will look at untrusted windows, and treat "the screen told me to" as attacker input when reviewing an approval prompt.
+
+### Optional confinement
+
+Four opt-in env flags narrow what an agent can touch. Each fails toward *less* action and composes with the layers above:
+
+- **`HYPRUSE_CONFINE`** restricts input to a scope of windows: `launched` (only windows hypruse itself opened this session), `class:firefox,kitty`, or `workspace:3,special:notes`. Keyboard, `click_ui`, and `hypr` window ops are refused outside the scope; a `pointer` click is refused when any window under the point is out of scope (Hyprland's window list is not z-ordered, so hypruse fails closed rather than guess which window is on top). This is what lets you leave an agent working while your password manager sits on another workspace, untouchable.
+- **`HYPRUSE_AUTH_GUARD`** (default **on**) refuses to click or type into a system authentication dialog (polkit agents, the GNOME keyring prompt), so a manipulated agent cannot approve a privilege escalation. Set `HYPRUSE_AUTH_GUARD=strict` to also refuse typing into a password field inside an ordinary window (a browser login), detected via the accessibility tree. A per-call `allow_auth=true` on `keyboard`/`click_ui` overrides it, and because it changes the tool's arguments the override surfaces distinctly in the approval prompt. `HYPRUSE_AUTH_GUARD=0` disables it.
+- **`HYPRUSE_STRICT`** refuses to act when the cursor or focused window moved since hypruse's last action (the human, or a popup, took the seat): the agent must re-read `desktop`/`screenshot` and retry, so it never types into a window you just switched to.
+- **`HYPRUSE_MARK`** draws a red border on every agent-owned window and flashes an on-screen notice when the agent captures the screen, so its presence is legible on the desktop itself rather than only in a corner widget.
 
 ## Performance
 

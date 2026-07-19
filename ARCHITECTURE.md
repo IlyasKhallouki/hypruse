@@ -17,6 +17,8 @@ src/hypruse/
   screenshot.py  grim capture: monitor / window / region + coord metadata
   a11y.py        AT-SPI accessibility-tree reader over D-Bus (busctl): the
                  `ui` tool's element names, coordinates, and values
+  trust.py       opt-in confinement, auth interlock, seat-contention guard,
+                 and ownership marking (HYPRUSE_CONFINE/AUTH_GUARD/STRICT/MARK)
   clipboard.py   wl-clipboard wrapper for the opt-in clipboard tool
   session.py     discovers HYPRLAND_INSTANCE_SIGNATURE / WAYLAND_DISPLAY
                  from runtime-dir sockets when the host stripped the env

@@ -12,6 +12,7 @@ coordinates, the same space `hyprctl cursorpos`, client `at`, and
 
 from __future__ import annotations
 
+import contextlib
 import json
 import shutil
 import subprocess
@@ -80,6 +81,21 @@ def dispatch(name: str, *args: str) -> None:
     out = _run("dispatch", name, *args)
     if out != "ok":
         raise HyprctlError(f"dispatch {name} {' '.join(args)}: {out}")
+
+
+def keyword(name: str, *values: str) -> None:
+    """Set a config keyword at runtime (`hyprctl keyword`, not a dispatcher):
+    used for runtime windowrulev2/border rules. Answers 'ok' on success."""
+    out = _run("keyword", name, *values)
+    if out != "ok":
+        raise HyprctlError(f"keyword {name} {' '.join(values)}: {out}")
+
+
+def notify(message: str, ms: int = 4000, icon: int = -1, color: str = "0") -> None:
+    """Show a Hyprland on-screen notification. Best-effort: a notify failure
+    must never break the action that triggered it."""
+    with contextlib.suppress(HyprctlError):
+        _run("notify", str(icon), str(ms), color, message)
 
 
 def cursor_pos() -> tuple[int, int]:
