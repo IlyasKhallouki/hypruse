@@ -18,8 +18,10 @@ accounts/credentials; the rest is automated.
 
 ## Cutting a release
 
-1. Bump `version` in `pyproject.toml` and move the CHANGELOG `[Unreleased]`
-   entries under the new version.
+1. Bump the version in BOTH `pyproject.toml` (`version`, feeds the
+   PyPI/tag build) and `src/hypruse/__init__.py` (`__version__`, feeds
+   `hypruse --version`); a test guards that they agree. Move the CHANGELOG
+   `[Unreleased]` entries under the new version.
 2. Tag and push:
    ```sh
    git tag -a v0.1.0 -m "v0.1.0"

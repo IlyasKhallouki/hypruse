@@ -20,7 +20,7 @@ classifiers = [
     "Topic :: Desktop Environment :: Window Managers",
     "Topic :: Software Development :: Libraries :: Python Modules",
 ]
-dependencies = ["mcp>=1.2"]
+dependencies = ["mcp>=1.2,<2"]
 
 [project.urls]
 Homepage = "https://github.com/IlyasKhallouki/hypruse"

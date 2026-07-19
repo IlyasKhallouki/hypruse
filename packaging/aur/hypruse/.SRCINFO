@@ -11,6 +11,7 @@ pkgbase = hypruse
 	makedepends = python-hatchling
 	depends = python
 	depends = python-mcp
+	depends = hyprland
 	depends = grim
 	depends = wtype
 	optdepends = wl-clipboard: opt-in clipboard tool (HYPRUSE_CLIPBOARD=1)

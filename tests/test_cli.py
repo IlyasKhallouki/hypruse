@@ -1,8 +1,20 @@
 import json
+import tomllib
+from pathlib import Path
 
 import pytest
 
+import hypruse
 from hypruse import cli
+
+
+def test_version_sources_agree():
+    # RELEASING.md requires bumping BOTH pyproject.toml (the PyPI build)
+    # and __init__.py (what `hypruse --version` prints); a release cut with
+    # only one bumped would report the previous version forever
+    pyproject = Path(__file__).resolve().parent.parent / "pyproject.toml"
+    version = tomllib.loads(pyproject.read_text())["project"]["version"]
+    assert hypruse.__version__ == version
 
 
 def test_merge_adds_entry_preserving_others():
