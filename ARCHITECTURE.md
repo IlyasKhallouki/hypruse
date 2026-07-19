@@ -6,7 +6,8 @@ Ten-minute orientation for contributors.
 
 ```
 src/hypruse/
-  cli.py         entry point: server by default, doctor / init subcommands
+  cli.py         entry point: server by default, doctor / init / stop
+                 subcommands
   server.py      MCP wiring: 15 tools (clipboard is opt-in), docstrings =
                  the agent-facing API
   hyprctl.py     all Hyprland IPC (queries + dispatchers), state trimming,
@@ -15,8 +16,10 @@ src/hypruse/
   wire.py        raw Wayland client for zwlr_virtual_pointer_v1
   input.py       pointer orchestration (movecursor + wire) and wtype keyboard
   screenshot.py  grim capture: monitor / window / region + coord metadata
-  a11y.py        AT-SPI accessibility-tree reader over D-Bus (busctl): the
-                 `ui` tool's element names, coordinates, and values
+  a11y.py        AT-SPI accessibility-tree reader over D-Bus (busctl): named
+                 controls, current values, exact coords, and focused-role
+                 lookup; backs ui, marks, click_ui, then='ui', and the
+                 auth-guard password-field check
   trust.py       opt-in confinement, auth interlock, seat-contention guard,
                  and ownership marking (HYPRUSE_CONFINE/AUTH_GUARD/STRICT/MARK)
   clipboard.py   wl-clipboard wrapper for the opt-in clipboard tool
@@ -54,17 +57,43 @@ what keeps multi-monitor and fractional scaling tractable.
   We shell out instead of reimplementing keymap upload; that wheel is
   round already.
 
-A press and its release always happen inside one tool call, which is what
-makes `pkill -f hypruse` a safe panic action at any moment.
+A click's press and release always happen inside one tool call. A drag
+holds a button across ~200 ms of cursor moves, so the SIGTERM path (what
+the kill switch sends) runs a registered cleanup that releases any held
+button first. Either way the process can die mid-run without stranding a
+button, which is what makes both `hypruse stop` (graceful: signals the
+beacon pid, releases the button, clears the beacon) and the blunter
+`pkill -f hypruse` safe panic actions at any moment.
 
 ## Sequence of a typical agent step
 
 1. `desktop` → find `firefox` at `0x…`, workspace 3, geometry.
 2. `hypr focus_window 0x…` (IPC, ~ms), no vision spent.
-3. `screenshot window=0x…` → crop + `geometry`/`scale`.
-4. `pointer click x y`, computed from image pixel via the contract.
+3. `screenshot window=0x…` → crop + `geometry`/`scale` (or `ui` to read
+   the accessibility tree by name, no pixels).
+4. `pointer click x y`, computed from image pixel via the contract (or
+   `click_ui name="Save"` to resolve and click in one call).
 5. `keyboard type "…"`.
-6. `desktop` again to verify the world changed as expected.
+6. `desktop` again to verify the world changed as expected (or fuse it:
+   most acting tools take `then='desktop'|'screenshot'|'ui'`).
+
+## Trust layers
+
+Four opt-in env flags (`HYPRUSE_CONFINE`, `HYPRUSE_AUTH_GUARD`,
+`HYPRUSE_STRICT`, `HYPRUSE_MARK`) live in `trust.py` and are enforced as
+`trust.guard_*` calls inside the acting tools in `server.py`: `pointer`,
+`keyboard`, `click_ui`, `hypr`, and `use_bind` each refuse an out-of-scope
+target, an authentication window, or a moved seat; `sequence` steps go
+through those same tool functions, so they inherit the guards. `launch` is
+the exception: it creates a new window (nothing to confine), so instead of
+guarding it seeds the owned-set (`note_launched`). A guard raises
+`TrustError`, which becomes the tool's error; every guard fails toward
+*less* action (an unresolved target or a malformed scope refuses rather
+than proceeds). `remember_seat` runs after an acting tool moves the seat so
+the next `guard_seat` has a fresh baseline. The guards are the confinement
+path over the same happy path above: step 4 is refused if the point is over
+an out-of-scope or authentication window, step 2 if the target is out of
+scope.
 
 ## Testing tiers
 

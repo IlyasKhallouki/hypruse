@@ -23,12 +23,17 @@ agent (Claude Code, or any MCP client)
    │ stdio
    ▼
 hypruse
-   ├── hyprctl -j ········▶ desktop state: monitors, workspaces, windows
+   ├── hyprctl -j ········▶ desktop state: monitors, workspaces, windows, layers
    ├── hyprctl dispatch ··▶ focus / move / close / launch / movecursor
    ├── grim ··············▶ screenshots: monitor, window crop, region
+   ├── busctl (AT-SPI) ···▶ accessibility tree: named controls, current
+   │                        values, exact coords (ui / marks / click_ui)
    ├── wtype ·············▶ keyboard (zwp_virtual_keyboard_v1, real XKB keymap)
    └── raw Wayland wire ··▶ click & scroll (zwlr_virtual_pointer_v1)
 ```
+
+Optional binaries gate two more tools: `imagemagick` draws the numbered
+overlay for `marks`, and `wl-clipboard` backs the opt-in `clipboard` tool.
 
 Design decisions:
 
@@ -47,7 +52,7 @@ Design decisions:
 | `marks` | Set-of-Marks capture: the window screenshot with every accessible control drawn as a numbered mark, plus a JSON legend (role, name, current value, exact click point per number); needs ImageMagick for the drawing, degrades to the legend alone without it |
 | `click_ui` | Click a control by accessible NAME or by a `marks` number in one call: the coordinate comes from the tree, the click goes through the real pointer (visible, same safety guarantees); an ambiguous name returns the candidates instead of guessing |
 | `pointer` | move / click / drag / scroll (discrete wheel notches) in global coordinates |
-| `keyboard` | Type literal text (unicode-safe) or press combos (`ctrl+shift+t`, `super+enter`, `F5`); optional `window` address focuses the target first so keystrokes land in the right app |
+| `keyboard` | Type literal text (unicode-safe) or press app-level combos (`ctrl+shift+t`, `esc`, `F5`); optional `window` address focuses the target first so keystrokes land in the right app. Compositor binds (`super+...`) go through `use_bind`, not here |
 | `hypr` | Switch workspace, focus/move/close windows, fullscreen, floating (pure IPC, milliseconds) |
 | `launch` | Start an app (optionally silent on another workspace), block on its actual `openwindow` event, return its address; detects single-instance apps (browsers) whose window ignores exec rules and moves it to the requested workspace |
 | `binds` | The user's own keybinds, decoded (`SUPER+Q`, action, description); the agent runs one with `use_bind` |
@@ -56,11 +61,11 @@ Design decisions:
 | `wait_for` | Block on real compositor events (window open/close, workspace change, title change, layer surfaces appearing/closing, urgency, screen sharing on/off) with a match filter and timeout; replaces sleep-and-hope in multi-step automations |
 | `clipboard` | Read or write the text clipboard via `wl-clipboard`; opt-in, exists only with `HYPRUSE_CLIPBOARD=1` in the server env |
 
-The acting tools (`pointer`, `keyboard`, `click_ui`, `hypr`, `use_bind`, `sequence`) take an optional `then` argument that appends the result to the same call, so the agent sees the effect without a second round-trip: `then='desktop'` adds a fresh semantic snapshot (~25 ms, cheap, best for window/focus changes), `then='screenshot'` a stable capture (best for visual changes), `then='ui'` the focused window's controls with their current values (a few hundred exact tokens, best after typing or toggling), `then='none'` nothing (the default everywhere except `sequence`, which defaults to `'desktop'`).
+The acting tools (`pointer`, `keyboard`, `click_ui`, `hypr`, `use_bind`, `sequence`) take an optional `then` argument that appends the result to the same call, so the agent sees the effect without a second round-trip: `then='desktop'` adds a fresh semantic snapshot (~20 ms, cheap, best for window/focus changes), `then='screenshot'` a stable capture (best for visual changes), `then='ui'` the focused window's controls with their current values (a few hundred exact tokens, best after typing or toggling), `then='none'` nothing (the default everywhere except `sequence`, which defaults to `'desktop'`).
 
 ## Install
 
-Requirements: Hyprland, `grim`, `wtype` (most Hyprland setups already have both), and [uv](https://docs.astral.sh/uv/). Optional: `wl-clipboard` for the opt-in clipboard tool, `imagemagick` for numbered `marks` captures.
+Requirements: Hyprland, `grim`, `wtype` (most Hyprland setups already have both), and [uv](https://docs.astral.sh/uv/). The accessibility tools (`ui`/`marks`/`click_ui`) use `busctl`, which ships with systemd. Optional: `wl-clipboard` for the opt-in clipboard tool, `imagemagick` for numbered `marks` captures.
 
 Arch Linux, from the [AUR](https://aur.archlinux.org/packages/hypruse):
 
@@ -124,8 +129,8 @@ Read this section before installing. **hypruse hands an agent your mouse, your k
 
 Four opt-in env flags narrow what an agent can touch. Each fails toward *less* action and composes with the layers above:
 
-- **`HYPRUSE_CONFINE`** restricts input to a scope of windows: `launched` (only windows hypruse itself opened this session), `class:firefox,kitty`, or `workspace:3,special:notes`. Keyboard, `click_ui`, and `hypr` window ops are refused outside the scope; a `pointer` click is refused when any window under the point is out of scope (Hyprland's window list is not z-ordered, so hypruse fails closed rather than guess which window is on top). This is what lets you leave an agent working while your password manager sits on another workspace, untouchable.
-- **`HYPRUSE_AUTH_GUARD`** (default **on**) refuses to click or type into a system authentication dialog (polkit agents, the GNOME keyring prompt), so a manipulated agent cannot approve a privilege escalation. Set `HYPRUSE_AUTH_GUARD=strict` to also refuse typing into a password field inside an ordinary window (a browser login), detected via the accessibility tree. A per-call `allow_auth=true` on `keyboard`/`click_ui` overrides it, and because it changes the tool's arguments the override surfaces distinctly in the approval prompt. `HYPRUSE_AUTH_GUARD=0` disables it.
+- **`HYPRUSE_CONFINE`** restricts input to a scope of windows: `launched` (only windows hypruse itself opened this session), `class:firefox,kitty`, or `workspace:3,special:notes`. Keyboard, `click_ui`, and `hypr` window ops are refused outside the scope; a `pointer` click is refused when any window under the point is out of scope (Hyprland's window list is not z-ordered, so hypruse fails closed rather than guess which window is on top). This is what lets you leave an agent working while your password manager sits on another workspace, untouchable. `use_bind` is refused outright while confinement is set, because a keybind runs an arbitrary compositor action that cannot be scoped to a window.
+- **`HYPRUSE_AUTH_GUARD`** (default **on**) refuses to click or type into a system authentication dialog (polkit agents, the GNOME keyring prompt), so a manipulated agent cannot approve a privilege escalation. Set `HYPRUSE_AUTH_GUARD=strict` to also refuse typing into a password field inside an ordinary window (a browser login), detected via the accessibility tree. A per-call `allow_auth=true` on `pointer`/`keyboard`/`click_ui` overrides it, and because it changes the tool's arguments the override surfaces distinctly in the approval prompt. `HYPRUSE_AUTH_GUARD=0` disables it.
 - **`HYPRUSE_STRICT`** refuses to act when the cursor or focused window moved since hypruse's last action (the human, or a popup, took the seat): the agent must re-read `desktop`/`screenshot` and retry, so it never types into a window you just switched to.
 - **`HYPRUSE_MARK`** makes the agent's presence legible on the desktop: it tags every window the agent opens `hypruse-owned` and flashes an on-screen notice when the agent opens a window or captures the screen. It also installs a `border_color` windowrule on that tag so owned windows get a colored outline, but whether a *runtime* window rule renders depends on your Hyprland version and config precedence (on some setups it does not take effect). For a guaranteed outline, add the rule to your Hyprland config, which hypruse's tagging then matches: `windowrule = border_color rgb(ff5555), tag hypruse-owned` (older Hyprland: `tag:hypruse-owned`).
 
@@ -175,7 +180,7 @@ The input e2e is deliberately manual: it borrows your cursor and keyboard, count
 
 ## Roadmap
 
-Grounded in measured hot-path latencies and the finding that LLM calls are 76 to 96% of computer-use task latency ([OSWorld-Human](https://arxiv.org/abs/2506.16042)), so cutting round-trips beats shaving milliseconds.
+Grounded in measured hot-path latencies and the finding that LLM calls are 76 to 96% of computer-use task latency ([OSWorld-Human](https://arxiv.org/abs/2506.16042)), so cutting round-trips beats shaving milliseconds. The round-trip work that framing motivated has largely shipped: `sequence`, act-and-observe `then=` (including `then='ui'`), and the accessibility-tree tools (`ui`, `marks`, `click_ui`) that target controls by name with no screenshot. What remains:
 
 **Faster**
 
@@ -183,21 +188,27 @@ Grounded in measured hot-path latencies and the finding that LLM calls are 76 to
 
 **Fewer round-trips**
 
-- `sequence` tool: run an ordered list of actions (click, type, key, wait) in one call, aborting the moment the compositor reports an unexpected change. Abort-on-change keeps a shared seat safe.
-- Act-and-observe fusion: let any action append a fresh semantic `desktop` snapshot to its result, so the agent sees the effect without a second screenshot round-trip.
-- Semantic screen diff: after an action, return only what changed (window topology from the event stream, or a bounded changed-region crop) instead of a full frame.
+- Semantic screen diff: after an action, return only what changed (window topology from the event stream, or a bounded changed-region crop) instead of a full frame. The socket2 event expansion behind `wait_for` already tracks most of the topology; the missing piece is folding it into a post-action delta.
 
-**More reach**
+**Deeper reading**
 
-- `record` tool: a scoped GIF or mp4 of the agent driving the desktop, via wf-recorder (a wlroots-family binary like grim).
-- Notifications: list recent desktop notifications and block on the next match, like `wait_for` for notifications.
-- Action journal, replay, and dry-run: an auditable NDJSON record of every action, replayable, with a validate-only mode.
+- Wider accessibility coverage: close the gaps the `ui` and `marks` tools hit today, chiefly GTK's newer combo boxes that publish neither their text nor selection (so a rendered dropdown value still needs a screenshot), plus AT-SPI value-change events so `then='ui'` can report a control settling without a poll.
+- Notifications: read recent desktop-notification content and history, not just wait for the popup to appear (`wait_for` already matches `layer_open` on the notification namespace).
+
+**Trust**
+
+- Action journal, replay, and dry-run: an auditable NDJSON record of every action, replayable, with a validate-only mode. This is the audit trail the confinement layers (`HYPRUSE_CONFINE`, `HYPRUSE_AUTH_GUARD`, `HYPRUSE_STRICT`, `HYPRUSE_MARK`) imply but do not yet persist.
+- `record` tool: a scoped GIF or mp4 of the agent driving the desktop, via wf-recorder (a wlroots-family binary like grim), a visual companion to the journal.
 
 **Platform**
 
 - sway / niri support: the wire client already speaks the wlr protocols; what remains is an IPC layer alongside `hyprctl.py` (contributions welcome).
 - Headless end-to-end tests in CI: needs a QEMU virtio-gpu VM, since Hyprland's aquamarine backend requires a real GPU render node that hosted runners lack.
+
+**Measurement**
+
 - Zoom-loop precision benchmark: measure click accuracy of the coarse-to-fine loop against known targets.
+- End-to-end task-success benchmark on Hyprland (OSWorld-style): the deferred bigger sibling of the zoom-loop microbenchmark, scoring full multi-step tasks through the real MCP surface so the a11y-versus-vision and round-trip work is judged on task completion, not latency alone.
 
 ## Related projects
 
