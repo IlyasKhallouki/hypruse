@@ -79,16 +79,40 @@ finish what you start, and expect every action to be visible. Before
 typing, pass `keyboard(window=<address>)` to focus the intended app first,
 so keystrokes never land in the wrong window."""
 
+READONLY_INSTRUCTIONS = """\
+hypruse is attached to a live Hyprland desktop in READ-ONLY MODE: the
+user enabled observation only, so the tools listed here are the whole
+surface. hypruse cannot move the cursor, type, press keys, run
+programs, or rearrange anything in this mode; the human at the desk
+drives, hypruse watches and reports.
+
+Workflow: call `desktop` first for the semantic state: monitors,
+workspaces, windows (address, class, title, `at` + `size` in global
+coords), the active window, cursor, and `layers` (launchers, bars,
+notification popups, and lock screens are not windows and appear only
+there). To read what an app shows, prefer `ui` (its accessibility
+tree: control names with CURRENT values, a few hundred exact tokens
+and no image) when the app exposes one; `marks` adds a numbered
+screenshot plus legend when you want to SEE the controls. Use
+`screenshot` (focused monitor, a window, or a region) and `zoom` (a
+native-resolution crop around a point) when the tree exposes nothing
+(terminals, canvas UIs, Electron/Chrome without a flag). `binds`
+lists the owner's own keybinds, useful for understanding their
+workflows. To notice a change (an app starting, a title updating, a
+layer appearing), block on `wait_for` instead of re-capturing in a
+loop.
+
+Coordinates: one space everywhere, Hyprland global logical pixels
+(window `at`, cursor). Screenshots are pixel space: map back with
+global = geometry[:2] + image_pixel / scale, using the metadata's
+`scale` and `image` [w,h] (they already account for any downscaling).
+When screenshot returns a file path instead of an image, read that
+file."""
+
 READONLY = os.environ.get("HYPRUSE_READONLY", "").lower() in ("1", "true", "yes", "on")
 CLIPBOARD = os.environ.get("HYPRUSE_CLIPBOARD", "").lower() in ("1", "true", "yes", "on")
 
-_READONLY_NOTE = """
-
-READ-ONLY MODE is active: only observation tools are available
-(desktop, screenshot, zoom, ui, marks, binds, wait_for). Input,
-window-management, and use_bind are disabled by the user."""
-
-mcp = FastMCP("hypruse", instructions=INSTRUCTIONS + (_READONLY_NOTE if READONLY else ""))
+mcp = FastMCP("hypruse", instructions=READONLY_INSTRUCTIONS if READONLY else INSTRUCTIONS)
 
 
 def _runtime_dir() -> Path:
@@ -105,7 +129,6 @@ def _prune_shots(d: Path, keep: int = 20) -> None:
             old.unlink()
 
 
-@mcp.tool()
 def desktop() -> dict[str, Any]:
     """Semantic desktop snapshot: monitors, workspaces, windows (address,
     class, title, `at` + `size` in global coords), active window, cursor,
@@ -184,7 +207,6 @@ def _deliver_capture(
     return _package(data, meta)
 
 
-@mcp.tool()
 def screenshot(
     window: str = "",
     region: str = "",
@@ -206,7 +228,6 @@ def screenshot(
     return _deliver_capture(window, region, scale=scale, stable=stable, lossless=lossless)
 
 
-@mcp.tool()
 def zoom(
     x: float,
     y: float,
@@ -302,7 +323,6 @@ def _ui_read(window: str = "", name: str = "", actionable: bool = True) -> list[
     return out
 
 
-@mcp.tool()
 def ui(window: str = "", name: str = "", actionable: bool = True) -> list[Any] | str:
     """Read a window's accessibility tree (AT-SPI) and return its elements
     with GLOBAL click points, so you can target a control by NAME with no
@@ -370,7 +390,6 @@ def _draw_marks(
 _last_marks: dict[str, Any] = {}
 
 
-@mcp.tool()
 def marks(window: str = "", name: str = "") -> list[Any] | str:
     """Set-of-Marks capture: a screenshot of the window WITH its accessible
     controls drawn as numbered red marks, plus a JSON legend mapping each
@@ -402,9 +421,14 @@ def marks(window: str = "", name: str = "") -> list[Any] | str:
                      "label": f"{e['role']} {e['name']!r}"}
     global _last_marks
     _last_marks = {"window": addr, "items": stored}
+    hint = (
+        "numbered marks match the legend entries"
+        if READONLY  # click_ui does not exist in read-only mode
+        else "click_ui(mark=N) clicks a numbered mark"
+    )
     legend_text = TextContent(
         type="text",
-        text=json.dumps({"legend": legend, "hint": "click_ui(mark=N) clicks a numbered mark"}),
+        text=json.dumps({"legend": legend, "hint": hint}),
     )
     marked = _draw_marks(data, meta["format"], points)
     if marked is None:
@@ -846,7 +870,6 @@ Check the install with:  hypruse --version
 """
 
 
-@mcp.tool()
 def binds() -> list[dict[str, Any]]:
     """The user's own Hyprland keybinds: combo, action, arg, and a
     description when the config provides one. This is how the desktop's
@@ -956,7 +979,6 @@ def _already_satisfied(event: str, needle: str) -> dict[str, Any] | None:
     return None
 
 
-@mcp.tool()
 def wait_for(event: str, match: str = "", timeout_s: float = 10) -> dict[str, Any] | str:
     """Block until a desktop event happens (real compositor events, not
     polling). event: 'window_open' | 'window_close' | 'workspace' |
@@ -1244,9 +1266,79 @@ def sequence(
     return _acted(head, then)
 
 
-# Acting tools register only outside read-only mode; observation tools
-# (desktop, screenshot, zoom, ui, marks, binds, wait_for) are decorated
-# above and always on. Clipboard is double-gated: opt-in env, never read-only.
+# Read-only mode strips the seven acting tools, so the observation tools'
+# own descriptions must not send the agent to them: these variants replace
+# the acting references with observation-only guidance. Tools not listed
+# here (wait_for) reference no acting tool and keep their docstring.
+_READONLY_DOCS = {
+    "desktop": """Semantic desktop snapshot: monitors, workspaces, windows (address,
+    class, title, `at` + `size` in global coords), active window, cursor,
+    and `layers` when layer-shell surfaces are up: launchers (wofi/rofi),
+    bars, notification popups, and lock screens are NOT windows and appear
+    only there, with a best-effort `kind` and global geometry you can
+    screenshot by region. Call first; pass the addresses it returns to the
+    other observation tools.""",
+    "screenshot": """Capture the focused monitor, a window (`window`: "active" or an
+    address from desktop, cheapest for reading one app), or a `region`
+    "x,y,WxH". Returns the image (or a file path to read) + JSON metadata
+    with geometry/scale for pixel→global mapping. `scale` 0.1-1.0:
+    optional deliberate downscale, usually leave unset. `stable=true`
+    waits (up to 2s) until two consecutive frames match, so a capture
+    right after a change is not taken mid-animation; metadata gains
+    `stable`. Captures are fast JPEG by default; `lossless=true` returns
+    PNG for pixel-exact work. To inspect a small control closely, follow
+    with `zoom` at the estimated point.""",
+    "zoom": """Native-resolution re-capture around a point: the precision step of
+    the coarse-to-fine loop. Screenshot first, estimate the target's global
+    x,y, zoom there, and read the fine detail on the zoomed image (scale
+    ~1.0, so global = geometry[:2] + image_pixel). `size` "WxH" in
+    logical pixels (default 480x360) is clamped to the screen; `window`
+    (an address from desktop) clamps to that window instead. The metadata
+    echoes the requested point back as `point`; `stable=true` waits for
+    the frame to settle first; `lossless=true` returns PNG.""",
+    "ui": """Read a window's accessibility tree (AT-SPI) and return its elements
+    with GLOBAL coordinates, so you can read an app's controls and their
+    state by NAME with no screenshot and no pixel guessing. `window` is an
+    address from desktop (default: the focused window). `name` filters to
+    elements whose accessible name contains it (case-insensitive);
+    `actionable` (default) keeps only interactive roles (buttons, entries,
+    menu items, ...). Returns [{role, name, x, y, clickable}]. Controls
+    that carry a CURRENT VALUE also report it: `value` (text typed into an
+    entry, or a slider/spinner number), `percent` for a slider's position,
+    `checked` for a box or toggle. Password fields never report contents,
+    and many dropdowns expose no value at all, so read the screen with
+    screenshot when a rendered value matters. Not every app exposes a tree
+    (terminals, and Electron/Chrome without --force-renderer-accessibility,
+    expose little or nothing); when it does not, fall back to
+    screenshot + zoom.""",
+    "marks": """Set-of-Marks capture: a screenshot of the window WITH its accessible
+    controls drawn as numbered red marks, plus a JSON legend mapping each
+    number to the control's role, name, current value, and exact global
+    position. One glance shows every control the accessibility tree knows:
+    read the number off the image and look it up in the legend. `window`
+    is an address from desktop (default: focused); `name` filters the
+    marked controls. Falls back to the plain legend when ImageMagick is
+    not installed, and to a fall-back-to-vision note when the app exposes
+    no tree (then use screenshot + zoom).""",
+    "binds": """The user's own Hyprland keybinds: combo, action, arg, and a
+    description when the config provides one. This is how the desktop's
+    owner drives it; read them to understand the owner's workflows.
+    Running a bind is an acting operation and is disabled in read-only
+    mode.""",
+}
+
+# Observation tools register in BOTH modes (docstrings become the MCP tool
+# descriptions at registration time, hence the swap first). Acting tools
+# register only outside read-only mode; clipboard is double-gated: opt-in
+# env, never read-only.
+_OBSERVE_TOOLS = (desktop, screenshot, zoom, ui, marks, binds, wait_for)
+if READONLY:
+    for _observe_tool in _OBSERVE_TOOLS:
+        _observe_tool.__doc__ = _READONLY_DOCS.get(
+            _observe_tool.__name__, _observe_tool.__doc__
+        )
+for _observe_tool in _OBSERVE_TOOLS:
+    mcp.tool()(_observe_tool)
 if not READONLY:
     for _acting_tool in (pointer, keyboard, click_ui, hypr, launch, use_bind, sequence):
         mcp.tool()(_acting_tool)
