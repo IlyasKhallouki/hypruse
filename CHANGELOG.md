@@ -6,6 +6,33 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.9.2] - 2026-07-19
+
+### Fixed
+- `sequence`: a `keyboard` or `click_ui` step with `window=X` no longer
+  aborts the run when X lives on another workspace. Focusing X switched
+  to its workspace, and the sequence mistook its own focus-induced switch
+  for a human takeover, dropping the remaining steps (the documented
+  type-then-enter pattern lost its enter). Any focus-capable step now
+  excuses the workspace it actually landed on.
+- `hypr fullscreen` / `toggle_floating` with no target act on the active
+  window, but skipped the `HYPRUSE_STRICT` seat guard, so in strict mode
+  they could fullscreen a window the human had just refocused. The
+  target-less branch now checks the seat guard (address-targeted actions
+  still skip it, since they name their window).
+
+### Changed
+- Documentation reorganized for the larger 0.8.0/0.9.x feature set: the
+  README roadmap no longer lists shipped work (`sequence`, `then=` fusion,
+  the a11y tools) as future and gains "Deeper reading", "Trust", and
+  "Measurement" sections; the "How it works" diagram shows the AT-SPI
+  (`busctl`) path the `ui`/`marks`/`click_ui` tools use; the security
+  model documents `pointer`'s `allow_auth` and that `use_bind` is refused
+  under confinement; ARCHITECTURE gains a trust-layer section and notes
+  `hypruse stop`. Several small factual fixes (the auth-guard override
+  covers `pointer` too, a stale desktop-snapshot timing figure, the
+  `super+enter` keyboard example that belonged to `use_bind`).
+
 ## [0.9.1] - 2026-07-19
 
 ### Fixed
