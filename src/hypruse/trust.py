@@ -8,9 +8,11 @@ toward LESS action, never more.
   HYPRUSE_CONFINE     restrict input to a scope of windows:
                       `launched` (only windows hypruse itself opened),
                       `class:foo,bar`, or `workspace:3,special:notes`
-  HYPRUSE_AUTH_GUARD  refuse to drive polkit/authentication dialogs and to
-                      type into password fields (default on; per-call
-                      allow_auth overrides)
+  HYPRUSE_AUTH_GUARD  refuse to drive polkit/authentication dialogs
+                      (default on; per-call allow_auth overrides). Set it
+                      to `strict` to ALSO refuse typing into a password
+                      field inside an ordinary window, which costs an
+                      a11y tree walk and is therefore opt-in
   HYPRUSE_STRICT      refuse to act when the seat moved without hypruse
                       since its last action (human or app took over)
   HYPRUSE_MARK        tag every agent-owned window `hypruse-owned` and flash
@@ -23,13 +25,14 @@ toward LESS action, never more.
 The server calls the guard_* functions inside each acting tool; a raised
 TrustError becomes the tool's error, which the MCP client surfaces.
 
-Two checks are ALWAYS on, no env var, because they are truthfulness aids
-rather than opt-in policy: covering_layer/guard_covering_layer (a click
-aimed under a launcher/lock/on-screen-keyboard layer surface would land
-on the layer, not the window) and guard_keyboard_layer (a launcher or
-lock screen holds the keyboard grab, so synthetic keys go to it no
-matter which window was focused). Both are positive-detection and
-best-effort: unreadable layers never block anything.
+Three checks are ALWAYS on, no env var, because they are truthfulness
+aids rather than opt-in policy: covering_layer/guard_covering_layer (a
+click aimed under a launcher or on-screen-keyboard layer surface would
+land on the layer, not the window), guard_keyboard_layer (a launcher
+holds the keyboard grab, so synthetic keys go to it no matter which
+window was focused), and guard_session_lock (the session is locked, so
+all input reaches a credential prompt). All are positive-detection and
+best-effort: an unreadable system state never blocks anything.
 """
 
 from __future__ import annotations
@@ -243,11 +246,15 @@ def _covers(client: dict[str, Any], x: float, y: float) -> bool:
 
 
 def covering_layer(x: float, y: float) -> dict[str, Any] | None:
-    """The focus-stealing layer surface (launcher, lock screen, on-screen
-    keyboard) whose rect covers (x, y), or None. Layer surfaces sit above
-    windows, so input aimed at a window under one lands on the layer
-    instead, and _windows_under cannot see that (`clients` never lists
-    layer surfaces). Positive-detection only (known kinds), and
+    """The TOPMOST focus-stealing layer surface (launcher, on-screen
+    keyboard, or a legacy layer-shell lock screen) whose rect covers
+    (x, y), or None. Layer surfaces sit above windows, so input aimed at
+    a window under one lands on the layer instead, and _windows_under
+    cannot see that (`clients` never lists layer surfaces). Where several
+    overlap, the one that actually receives the input is the highest
+    level, and within a level the most recently mapped, which is the
+    order `hyprctl layers` reports; naming any other surface in a refusal
+    would misinform. Positive-detection only (known kinds), and
     best-effort by design: this is a truthfulness aid, not a confinement
     boundary, so an unreadable layer list yields None rather than
     blocking every click."""
@@ -255,18 +262,98 @@ def covering_layer(x: float, y: float) -> dict[str, Any] | None:
         surfaces = hyprctl.parse_layers(hyprctl.query("layers"))
     except Exception:
         return None
+    best: dict[str, Any] | None = None
+    best_rank = -1
     for s in surfaces:
         if s.get("kind") not in hyprctl.FOCUS_STEALING_KINDS:
             continue
         g = s.get("geometry") or []
-        if (
+        if not (
             len(g) == 4
             and None not in g
             and g[0] <= x < g[0] + g[2]
             and g[1] <= y < g[1] + g[3]
         ):
-            return s
+            continue
+        rank = _level_rank(s.get("level", ""))
+        if rank >= best_rank:  # >= so a later surface on the same level wins
+            best, best_rank = s, rank
+    return best
+
+
+def _level_rank(level: str) -> int:
+    """Stacking order of a parsed layer level name; unknown levels sort
+    lowest so a named level always outranks one we cannot place."""
+    try:
+        return hyprctl.LAYER_LEVELS.index(level)
+    except ValueError:
+        return -1
+
+
+# Session lockers. These are ext-session-lock-v1 clients, NOT layer-shell
+# clients, so they never appear in `hyprctl layers` and no layer-based
+# check can see them; Hyprland exposes no lock state over hyprctl either.
+# The reliable signal is the PROCESS: the protocol hands the session back
+# the instant the locking client exits, so a live locker means a locked
+# (or actively locking) session. Older swaylock/gtklock releases drew
+# their lock with layer-shell instead, which `layer_kind` still catches.
+_LOCKER_COMMS = frozenset(
+    {
+        "hyprlock",
+        "swaylock",
+        "swaylock-effects",
+        "gtklock",
+        "waylock",
+        "gtygra",  # hyprlock's binary name on some older packagings
+    }
+)
+
+
+_PROC = "/proc"  # overridden in tests so the scan never reads live state
+
+
+def session_locked() -> str | None:
+    """The name of a running session locker, or None. Reads /proc directly
+    rather than shelling out, so it adds no binary dependency (~8 ms, the
+    same order as one hyprctl call). Best-effort like the layer checks: an
+    unreadable /proc yields None rather than blocking every action."""
+    try:
+        entries = list(os.scandir(_PROC))
+    except OSError:
+        return None
+    for entry in entries:
+        if not entry.name.isdigit():
+            continue
+        try:
+            with open(f"{_PROC}/{entry.name}/comm") as fh:
+                comm = fh.read().strip()
+        except OSError:
+            continue  # the process exited between listing and reading
+        if comm in _LOCKER_COMMS:
+            return comm
     return None
+
+
+def guard_session_lock(allow_auth: bool) -> str:
+    """Refuse input while the session is locked. Every event, pointer or
+    keyboard, reaches the lock surface, which is a credential prompt: the
+    agent cannot act on any window, and typing there feeds a password
+    field. allow_auth downgrades this to the returned note, for the case
+    where a human genuinely wants the agent to unlock."""
+    locker = session_locked()
+    if locker is None:
+        return ""
+    if not allow_auth:
+        raise TrustError(
+            f"the session is locked ({locker}): all input goes to its "
+            "credential prompt, not to any window. Unlock the session "
+            "first. Pass allow_auth=true only if a human intends the agent "
+            "to drive that prompt."
+        )
+    return (
+        f"; NOTE: the session is locked ({locker}), so the input went to "
+        "its credential prompt, not to any window"
+    )
 
 
 def guard_keyboard_layer(window_given: bool, allow_auth: bool) -> str:
@@ -296,7 +383,7 @@ def guard_keyboard_layer(window_given: bool, allow_auth: bool) -> str:
         surfaces = hyprctl.parse_layers(hyprctl.query("layers"))
     except Exception:
         return ""
-    grabbers = [s for s in surfaces if s.get("kind") in ("launcher", "lock")]
+    grabbers = [s for s in surfaces if s.get("kind") in hyprctl.KEYBOARD_GRABBING_KINDS]
     if not grabbers:
         return ""
     # a lock screen outranks a launcher when both are somehow mapped
@@ -305,8 +392,7 @@ def guard_keyboard_layer(window_given: bool, allow_auth: bool) -> str:
     if window_given:
         raise TrustError(
             f"the {kind} layer {ns!r} holds the keyboard grab, so keys cannot "
-            "reach the requested window. Drive the layer itself (call keyboard "
-            "without window=), or close it first (usually esc)."
+            f"reach the requested window. {_dismiss_advice(kind)}"
         )
     scope = _confine_scope()
     if scope is not None:
@@ -314,7 +400,7 @@ def guard_keyboard_layer(window_given: bool, allow_auth: bool) -> str:
             f"the {kind} layer {ns!r} holds the keyboard grab, and a layer "
             f"surface is not a window, so it cannot be confined "
             f"({_describe(scope)}); typing is refused while HYPRUSE_CONFINE "
-            "is set. Close the layer first (usually esc)."
+            f"is set. {_dismiss_advice(kind)}"
         )
     if kind == "lock" and not allow_auth:
         raise TrustError(
@@ -325,6 +411,21 @@ def guard_keyboard_layer(window_given: bool, allow_auth: bool) -> str:
     return (
         f"; NOTE: the {kind} layer {ns!r} holds the keyboard grab, so the "
         "keys went to it, not to the focused window"
+    )
+
+
+def _dismiss_advice(kind: str) -> str:
+    """How to get a layer of this kind out of the way. A lock screen is
+    the one surface designed NOT to yield to a keystroke, so telling the
+    agent to press esc there would be false, and telling it to drive the
+    layer instead would route it into the credential refusal below."""
+    if kind == "lock":
+        return "Unlock the session first."
+    if kind == "osk":
+        return "Dismiss the on-screen keyboard first."
+    return (
+        "Drive the launcher itself (call keyboard without window=), or "
+        "close it first (usually esc)."
     )
 
 
@@ -340,8 +441,8 @@ def guard_covering_layer(x: float, y: float) -> None:
         raise TrustError(
             f"({x:.0f}, {y:.0f}) is covered by the {s['kind']} layer surface "
             f"{s['namespace']!r}: the click would land on that layer, not on "
-            "the window's control. Close it first (usually esc), or drive it "
-            "deliberately with `pointer`."
+            f"the window's control. {_dismiss_advice(s['kind'])} To click the "
+            "layer deliberately, use `pointer`."
         )
 
 

@@ -34,8 +34,8 @@ hypruse controls a live Hyprland desktop. Workflow: call `desktop` first
 and prefer `hypr`/`launch` (IPC, instant and exact) for anything window-
 or workspace-shaped; use `screenshot` + `pointer`/`keyboard` only to see
 and operate inside application windows. Launchers, bars, notification
-popups, and lock screens are not windows: `desktop` reports them under
-`layers`. To CLICK a named control inside an app, call `click_ui` FIRST:
+popups, and on-screen keyboards are not windows: `desktop` reports them
+under `layers`. To CLICK a named control inside an app, call `click_ui` FIRST:
 for GTK/Qt apps it resolves the control in the accessibility tree and
 clicks it in ONE call, no image and no pixel estimation (`ui` lists the
 controls and their current values without clicking; `marks` returns a
@@ -90,8 +90,8 @@ drives, hypruse watches and reports.
 Workflow: call `desktop` first for the semantic state: monitors,
 workspaces, windows (address, class, title, `at` + `size` in global
 coords), the active window, cursor, and `layers` (launchers, bars,
-notification popups, and lock screens are not windows and appear only
-there). To read what an app shows, prefer `ui` (its accessibility
+notification popups, and on-screen keyboards are not windows and
+appear only there). To read what an app shows, prefer `ui` (its accessibility
 tree: control names with CURRENT values, a few hundred exact tokens
 and no image) when the app exposes one; `marks` adds a numbered
 screenshot plus legend when you want to SEE the controls. Use
@@ -134,8 +134,8 @@ def desktop() -> dict[str, Any]:
     """Semantic desktop snapshot: monitors, workspaces, windows (address,
     class, title, `at` + `size` in global coords), active window, cursor,
     and `layers` when layer-shell surfaces are up: launchers (wofi/rofi),
-    bars, notification popups, and lock screens are NOT windows and appear
-    only there, with a best-effort `kind` and global geometry you can
+    bars, notification popups, and on-screen keyboards are NOT windows and
+    appear only there, with a best-effort `kind` and global geometry you can
     screenshot by region or click into. Call first; act on the addresses
     it returns."""
     snap = hyprctl.snapshot()
@@ -476,6 +476,13 @@ def _acted(msg: str, then: str, window: str = "") -> list[Any] | str:
             view = _ui_read(window)
         except Exception as exc:  # the observation must never mask the action's success
             view = f"ui read failed: {exc}"
+            if window:
+                # the acted-on window can be GONE: clicking Close/OK/Discard
+                # destroys the very window whose controls we were asked to
+                # re-read. Fall back to whatever holds focus now (usually
+                # the parent), which is what the agent actually wants to see.
+                with contextlib.suppress(Exception):
+                    view = _ui_read()
         payload = view if isinstance(view, str) else json.dumps(view)
         return [head, TextContent(type="text", text=payload)]
     raise ValueError(f"unknown then {then!r}: {'|'.join(_OBSERVE_MODES)}")
@@ -526,6 +533,10 @@ def pointer(
     safety.touch(f"pointer:{action}")
     trust.guard_seat()
     note = ""
+    if action != "move":
+        # a locked session routes every event to its credential prompt,
+        # so no window can receive this; a move only shifts the cursor
+        note = trust.guard_session_lock(allow_auth)
     if action == "move":
         # a move only repositions the cursor; the input-delivering actions
         # below are the ones the confinement and auth guards gate
@@ -534,18 +545,18 @@ def pointer(
         hinput.move(x, y)
     elif action == "click":
         trust.guard_pointer(x, y, allow_auth)  # None x/y = click at current cursor
-        note = _layer_note(x, y)
+        note += _layer_note(x, y)
         hinput.click(x, y, button=button, double=double)
     elif action == "drag":
         if None in (x, y, to_x, to_y):
             raise ValueError("drag needs x, y, to_x, to_y")
         trust.guard_pointer(x, y, allow_auth)
         trust.guard_pointer(to_x, to_y, allow_auth)  # the drag ends elsewhere; guard that too
-        note = _layer_note(x, y)
+        note += _layer_note(x, y)
         hinput.drag(x, y, to_x, to_y, button=button)  # type: ignore[arg-type]
     elif action == "scroll":
         trust.guard_pointer(x, y, allow_auth)  # None x/y = scroll at current cursor
-        note = _layer_note(x, y)
+        note += _layer_note(x, y)
         hinput.scroll(dy=scroll_dy, dx=scroll_dx, x=x, y=y)
     else:
         raise ValueError(f"unknown action {action!r}: move|click|drag|scroll")
@@ -575,11 +586,21 @@ def keyboard(
     a human intends that credential entry)."""
     safety.touch(f"keyboard:{action}")
     trust.guard_seat()
+    # validate EVERY argument before any side effect: focusing the target
+    # below is a visible seat change, and a call that goes on to raise
+    # must not have moved the human's focus on its way out
+    if action not in ("type", "key"):
+        raise ValueError(f"unknown action {action!r}: type|key")
+    if action == "type" and not text:
+        raise ValueError("type needs text")
+    if action == "key" and not keys:
+        raise ValueError("key needs keys")
     addr_str = _addr(window) if window else ""  # validate the address format first
-    # a mapped launcher/lock layer holds the keyboard grab, so keys would
-    # go to it regardless of window focus: refuse when that breaks the
-    # caller's stated intent, otherwise report it honestly (see the guard)
-    note = trust.guard_keyboard_layer(bool(window), allow_auth)
+    # a locked session eats all input, and a mapped launcher layer holds
+    # the keyboard grab regardless of window focus: refuse when that
+    # breaks the caller's stated intent, else report it (see the guards)
+    note = trust.guard_session_lock(allow_auth)
+    note += trust.guard_keyboard_layer(bool(window), allow_auth)
     # resolve the window keystrokes will land in, for the confinement and
     # auth guards, but only when a guard is active (it costs a query). When
     # no window= is given we best-effort the focused one; a bare key (esc,
@@ -595,20 +616,14 @@ def keyboard(
         time.sleep(0.05)  # let keyboard focus settle before typing into it
     into = f" into {window}" if window else ""
     if action == "type":
-        if not text:
-            raise ValueError("type needs text")
         if target is not None:
             trust.guard_password_field(target, allow_auth)  # refuse typing a password
         hinput.type_text(text)
         trust.remember_seat()
         return _acted(f"typed {len(text)} characters{into}{note}", then)
-    if action == "key":
-        if not keys:
-            raise ValueError("key needs keys")
-        hinput.key_combo(keys)
-        trust.remember_seat()
-        return _acted(f"pressed {keys}{into}{note}", then)
-    raise ValueError(f"unknown action {action!r}: type|key")
+    hinput.key_combo(keys)
+    trust.remember_seat()
+    return _acted(f"pressed {keys}{into}{note}", then)
 
 
 def click_ui(
@@ -674,8 +689,9 @@ def click_ui(
         desc = f"{e['role']} {e['name']!r}"
     trust.guard_client(client)  # confinement
     trust.guard_auth_client(client, allow_auth)
-    # a launcher/lock layer over the point would swallow the click while
-    # the result claimed success; refuse before any side effect
+    # a locked session, or a layer over the point, would swallow the click
+    # while the result claimed success; refuse before any side effect
+    trust.guard_session_lock(allow_auth)
     trust.guard_covering_layer(x, y)
     hyprctl.dispatch("focuswindow", f"address:{client['address']}")
     time.sleep(0.05)  # focus (and a possible workspace switch) settles first
@@ -1052,9 +1068,11 @@ _SEQ_HANDLERS = {
 # abort the sequence on its own clicks. The consequence is that a bare
 # focus steal is NOT caught; a keyboard step's window= (which focuses
 # first) is the reliable guard against typing into the wrong window.
-# Layer events count only for kinds that grab the keyboard (a launcher or
-# lock screen popping up mid-sequence would swallow the next keystrokes);
-# notification popups and bars are noise, not a takeover.
+# Layer events count only for kinds that take the seat over: a launcher
+# popping up mid-sequence swallows the next keystrokes, and an on-screen
+# keyboard, while it does not grab the keyboard, covers the area the next
+# click was aimed at. Notification popups and bars are noise, not a
+# takeover.
 _WATCHED_EVENTS = {
     "openwindow", "closewindow", "movewindow", "workspace", "openlayer", "closelayer",
 }
@@ -1296,8 +1314,8 @@ _READONLY_DOCS = {
     "desktop": """Semantic desktop snapshot: monitors, workspaces, windows (address,
     class, title, `at` + `size` in global coords), active window, cursor,
     and `layers` when layer-shell surfaces are up: launchers (wofi/rofi),
-    bars, notification popups, and lock screens are NOT windows and appear
-    only there, with a best-effort `kind` and global geometry you can
+    bars, notification popups, and on-screen keyboards are NOT windows and
+    appear only there, with a best-effort `kind` and global geometry you can
     screenshot by region. Call first; pass the addresses it returns to the
     other observation tools.""",
     "screenshot": """Capture the focused monitor, a window (`window`: "active" or an

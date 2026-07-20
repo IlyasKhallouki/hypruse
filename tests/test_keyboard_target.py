@@ -130,3 +130,38 @@ def test_windowless_launcher_typing_refused_under_confinement(stub, monkeypatch)
     with pytest.raises(srv.trust.TrustError, match="cannot be confined"):
         srv.keyboard("type", text="malicious-command")
     assert stub["typed"] == []
+
+
+def test_keyboard_refuses_while_the_session_is_locked(stub, monkeypatch):
+    # the lock screen is ext-session-lock, invisible to `layers`: this is
+    # the case the layer-based guard could never see
+    monkeypatch.setattr(srv.trust, "session_locked", lambda: "hyprlock")
+    with pytest.raises(srv.trust.TrustError, match="session is locked"):
+        srv.keyboard("type", text="hunter2")
+    assert stub["typed"] == []
+    assert stub["dispatch"] == []
+
+
+def test_locked_session_refusal_survives_a_window_target(stub, monkeypatch):
+    monkeypatch.setattr(srv.trust, "session_locked", lambda: "hyprlock")
+    with pytest.raises(srv.trust.TrustError, match="session is locked"):
+        srv.keyboard("type", text="secret", window="0xabc")
+    assert stub["typed"] == []
+    assert stub["dispatch"] == []  # focus never moved
+
+
+@pytest.mark.parametrize(
+    "kwargs,match",
+    [
+        ({"action": "bogus", "window": "0xabc"}, "unknown action"),
+        ({"action": "type", "text": "", "window": "0xabc"}, "type needs text"),
+        ({"action": "key", "keys": "", "window": "0xabc"}, "key needs keys"),
+    ],
+)
+def test_malformed_call_never_steals_focus(stub, kwargs, match):
+    # focusing the target is a visible seat change; a call that goes on to
+    # raise must not have moved the human's focus on its way out
+    with pytest.raises(ValueError, match=match):
+        srv.keyboard(**kwargs)
+    assert stub["dispatch"] == []
+    assert stub["typed"] == [] and stub["keys"] == []

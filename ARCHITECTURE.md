@@ -93,15 +93,21 @@ than proceeds). `remember_seat` runs after an acting tool moves the seat so
 the next `guard_seat` has a fresh baseline; the observation tools that
 show current state (`desktop`, `screenshot`/`zoom` captures, `ui`,
 `marks`) re-baseline too, so a tripped strict guard recovers when the
-agent re-observes. Two always-on companion checks cover what the
-window-based guards cannot see, since layer surfaces never appear in
-`clients`: a click aimed under a launcher, lock screen, or on-screen
-keyboard layer would silently land on the layer (`click_ui` refuses,
-`pointer` appends a warning naming the layer), and a launcher or lock
-screen holds the keyboard grab, so `keyboard` refuses a window-targeted
-type, refuses a lock screen outright (credential surface, `allow_auth`
-overrides), and annotates window-less typing with where the keys really
-went. The guards are the confinement
+agent re-observes. Three always-on companion checks cover what the
+window-based guards cannot see. Layer surfaces never appear in
+`clients`, so a click aimed under a launcher or on-screen keyboard
+would silently land on the layer (`click_ui` refuses, `pointer` appends
+a warning naming the topmost covering surface), and a launcher holds
+the keyboard grab, so `keyboard` refuses a window-targeted type and
+annotates window-less typing with where the keys really went. A locked
+session is invisible to both: modern lockers (hyprlock, swaylock >=
+1.7) are `ext-session-lock-v1` clients rather than layer-shell ones, so
+they appear in neither `clients` nor `layers`, and Hyprland exposes no
+lock state over IPC. `trust.session_locked` therefore detects the
+locker PROCESS, since the protocol returns the session the instant that
+client exits, and every input tool refuses while it is up unless
+`allow_auth` says a human wants the agent driving the prompt. The
+guards are the confinement
 path over the same happy path above: step 4 is refused if the point is over
 an out-of-scope or authentication window, step 2 if the target is out of
 scope.

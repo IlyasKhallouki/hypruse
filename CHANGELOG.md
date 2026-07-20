@@ -48,9 +48,31 @@ All notable changes to this project are documented here. The format follows
 - `wait_for('title_change')` waits on `windowtitlev2` only: the
   address-only `windowtitle` event could never satisfy a title match,
   and an unfiltered wait could return a payload with no title in it.
-  Needs Hyprland >= 0.40 (mid-2024), which introduced the v2 event.
+  This requires a Hyprland new enough to emit `windowtitlev2`.
 - `marks` now flashes the same `HYPRUSE_MARK` capture notice as
   `screenshot`/`zoom` (it takes a real capture and was silent).
+- Input is refused while the session is LOCKED. This gap was found by
+  audit: the lock-screen protections above were built on the `layers`
+  list, but modern lockers (hyprlock, swaylock >= 1.7) are
+  `ext-session-lock-v1` clients, not layer-shell clients, so they never
+  appear there and every lock branch was unreachable against the locker
+  people actually run. Hyprland exposes no lock state over IPC either,
+  so detection now uses the locker process, which the protocol
+  guarantees exits on unlock. `pointer`, `keyboard`, and `click_ui`
+  refuse while it is up; `allow_auth=true` downgrades that to a note
+  for a human who wants the agent to unlock. The docs claiming lock
+  screens appear under `layers` were corrected in the same pass.
+- `click_ui` with `then='ui'` no longer answers "window not found" when
+  the click dismissed its own window (Close, OK, Discard). It falls
+  back to the focused window, which is normally the parent.
+- `keyboard` validates `action`/`text`/`keys` before focusing the
+  target window, so a malformed call no longer moves the human's focus
+  on its way to raising.
+- A layer refusal that names the covering surface now names the TOPMOST
+  one (highest level, most recently mapped) rather than the first in
+  list order, and its "close it first" advice is written per kind: a
+  lock screen does not yield to esc, and an on-screen keyboard is
+  dismissed rather than escaped.
 
 ### Changed
 - Read-only mode ships its own server instructions and observation-tool

@@ -164,12 +164,21 @@ def _monitor(m: dict[str, Any]) -> dict[str, Any]:
     return out
 
 
-# layer-shell surfaces are not windows: launchers, bars, notification
-# daemons, and lock screens live here, invisible to `clients`. Namespaces
-# are app-chosen strings, so classification is a prefix heuristic that
-# degrades to 'unknown' rather than mislabeling.
-_LAYER_LEVELS = ("background", "bottom", "top", "overlay")
+# layer-shell surfaces are not windows: launchers, bars, and notification
+# daemons live here, invisible to `clients`. Namespaces are app-chosen
+# strings, so classification is a prefix heuristic that degrades to
+# 'unknown' rather than mislabeling.
 
+# stacking order, lowest first; also the ordering key for resolving which
+# of several overlapping surfaces actually receives input
+LAYER_LEVELS = ("background", "bottom", "top", "overlay")
+
+# NOTE on `lock`: a MODERN lock screen (hyprlock, swaylock >= 1.7) is an
+# ext-session-lock-v1 client, not a layer-shell client, so it never
+# appears here at all and this kind cannot match it. Detecting a locked
+# session is trust.session_locked()'s job. The kind is kept because older
+# lockers did draw with layer-shell, and because a surface that names
+# itself 'lockscreen' should not be mistaken for an ordinary overlay.
 _LAYER_KINDS = (
     ("launcher", ("wofi", "rofi", "fuzzel", "tofi", "anyrun", "walker", "launcher")),
     ("bar", ("waybar", "hyprpanel", "ags-", "bar")),
@@ -187,11 +196,18 @@ def layer_kind(namespace: str) -> str:
     return "unknown"
 
 
-# layer kinds that take the seat over from the windows beneath them: a
-# launcher or lock screen grabs the keyboard, and any of these receives
-# (or swallows) pointer input aimed at whatever its surface covers. Bars
-# and notification popups are surfaces too, but not a takeover.
+# layer kinds that take the seat over from the windows beneath them.
+# These do NOT all grab the keyboard: a launcher (and a legacy layer-shell
+# lock screen) does, while an on-screen keyboard SENDS keys rather than
+# eating them. What they share is that each one receives, or swallows, the
+# POINTER input aimed at whatever its surface covers, and each is a seat
+# takeover a running `sequence` must notice. Bars and notification popups
+# are surfaces too, but not a takeover.
 FOCUS_STEALING_KINDS = frozenset({"launcher", "lock", "osk"})
+
+# the subset that actually holds a keyboard grab, so synthetic keys reach
+# the layer no matter which window was focused
+KEYBOARD_GRABBING_KINDS = frozenset({"launcher", "lock"})
 
 
 def parse_layers(raw: dict[str, Any]) -> list[dict[str, Any]]:
@@ -211,7 +227,7 @@ def parse_layers(raw: dict[str, Any]) -> list[dict[str, Any]]:
                     {
                         "namespace": ns,
                         "kind": layer_kind(ns),
-                        "level": _LAYER_LEVELS[level] if level < 4 else str(level),
+                        "level": LAYER_LEVELS[level] if level < 4 else str(level),
                         "monitor": monitor,
                         "geometry": [s.get("x"), s.get("y"), s.get("w"), s.get("h")],
                     }

@@ -5,6 +5,9 @@ import pytest
 
 from hypruse import trust
 
+# bound at import time, so conftest's autouse stub does not hide it
+from hypruse.trust import session_locked as real_session_locked
+
 
 @pytest.fixture(autouse=True)
 def clean_env(monkeypatch):
@@ -449,3 +452,112 @@ def test_guard_keyboard_layer_fails_open_on_unreadable_layers(monkeypatch):
 
     monkeypatch.setattr(trust.hyprctl, "query", boom)
     assert trust.guard_keyboard_layer(True, False) == ""
+
+
+# --- session lock (ext-session-lock, invisible to `layers`) -------------------
+
+
+def _fake_proc(tmp_path, procs):
+    """A /proc tree with the given {pid: comm}, plus a non-pid entry."""
+    for pid, comm in procs.items():
+        d = tmp_path / pid
+        d.mkdir()
+        (d / "comm").write_text(comm + "\n")
+    (tmp_path / "self").mkdir()  # a real /proc has non-numeric entries too
+    return str(tmp_path)
+
+
+def test_session_locked_reads_proc(monkeypatch, tmp_path):
+    # hyprlock is an ext-session-lock-v1 client, so it appears in NEITHER
+    # `hyprctl clients` nor `hyprctl layers`; the process is the signal
+    monkeypatch.setattr(
+        trust, "_PROC", _fake_proc(tmp_path, {"101": "waybar", "102": "hyprlock"})
+    )
+    assert real_session_locked() == "hyprlock"
+
+
+def test_session_locked_none_when_no_locker(monkeypatch, tmp_path):
+    monkeypatch.setattr(
+        trust, "_PROC", _fake_proc(tmp_path, {"101": "waybar", "102": "kitty"})
+    )
+    assert real_session_locked() is None
+
+
+def test_session_locked_survives_a_process_exiting_mid_scan(monkeypatch, tmp_path):
+    # /proc entries vanish under you; a disappearing pid must not raise
+    root = _fake_proc(tmp_path, {"101": "kitty", "102": "hyprlock"})
+    (tmp_path / "103").mkdir()  # a pid dir with no readable comm
+    monkeypatch.setattr(trust, "_PROC", root)
+    assert real_session_locked() == "hyprlock"
+
+
+def test_session_locked_fails_open_on_unreadable_proc(monkeypatch):
+    def boom(path):
+        raise OSError("no /proc")
+
+    monkeypatch.setattr(trust.os, "scandir", boom)
+    assert real_session_locked() is None  # best-effort, never blocks
+
+
+def test_guard_session_lock_refuses_and_allow_auth_downgrades(monkeypatch):
+    monkeypatch.setattr(trust, "session_locked", lambda: "hyprlock")
+    with pytest.raises(trust.TrustError, match="session is locked"):
+        trust.guard_session_lock(allow_auth=False)
+    note = trust.guard_session_lock(allow_auth=True)
+    assert "hyprlock" in note and "credential prompt" in note
+
+
+def test_guard_session_lock_silent_when_unlocked(monkeypatch):
+    monkeypatch.setattr(trust, "session_locked", lambda: None)
+    assert trust.guard_session_lock(allow_auth=False) == ""
+
+
+# --- topmost surface resolution ----------------------------------------------
+
+
+def test_covering_layer_picks_the_topmost_overlapping_surface(monkeypatch):
+    # two focus-stealing surfaces over the same point: the one that gets
+    # the click is the higher level, and naming the other would misinform
+    raw = {
+        "DP-1": {
+            "levels": {
+                "2": [{"namespace": "wvkbd", "x": 0, "y": 0, "w": 1000, "h": 1000}],
+                "3": [{"namespace": "rofi", "x": 0, "y": 0, "w": 1000, "h": 1000}],
+            }
+        }
+    }
+    monkeypatch.setattr(trust.hyprctl, "query", lambda cmd: raw)
+    assert trust.covering_layer(500, 500)["namespace"] == "rofi"  # overlay > top
+
+
+def test_covering_layer_last_mapped_wins_within_a_level(monkeypatch):
+    raw = {
+        "DP-1": {
+            "levels": {
+                "3": [
+                    {"namespace": "rofi", "x": 0, "y": 0, "w": 1000, "h": 1000},
+                    {"namespace": "fuzzel", "x": 0, "y": 0, "w": 1000, "h": 1000},
+                ]
+            }
+        }
+    }
+    monkeypatch.setattr(trust.hyprctl, "query", lambda cmd: raw)
+    assert trust.covering_layer(500, 500)["namespace"] == "fuzzel"
+
+
+def test_refusal_advice_is_written_per_kind(monkeypatch):
+    # 'usually esc' is false for a lock screen (the one surface designed
+    # not to yield to a keystroke) and for an on-screen keyboard
+    assert "esc" in trust._dismiss_advice("launcher")
+    assert "esc" not in trust._dismiss_advice("lock")
+    assert "Unlock" in trust._dismiss_advice("lock")
+    assert "esc" not in trust._dismiss_advice("osk")
+
+
+def test_lock_layer_refusal_does_not_recommend_a_path_that_refuses(monkeypatch):
+    # the window= refusal used to say 'drive the layer itself', which
+    # routes straight into the credential refusal below it
+    monkeypatch.setattr(trust.hyprctl, "query", lambda cmd: LOCK_RAW)
+    with pytest.raises(trust.TrustError) as exc:
+        trust.guard_keyboard_layer(True, False)
+    assert "without window=" not in str(exc.value)

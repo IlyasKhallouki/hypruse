@@ -209,3 +209,58 @@ def test_layer_note_empty_when_cursor_unreadable(monkeypatch):
 
     monkeypatch.setattr(srv.hyprctl, "cursor_pos", boom)
     assert srv._layer_note(None, None) == ""
+
+
+def test_then_ui_falls_back_when_the_clicked_window_is_gone(monkeypatch):
+    # clicking Close/OK/Discard destroys the very window whose controls
+    # were asked for; show the parent instead of a not-found error
+    parent = [{"role": "push button", "name": "New", "x": 1, "y": 2}]
+
+    def ui_read(window=""):
+        if window:
+            raise ValueError(f"window {window!r} not found, call desktop()")
+        return parent
+
+    monkeypatch.setattr(srv, "_ui_read", ui_read)
+    out = srv._acted("clicked Discard", "ui", window="0xdead")
+    assert out[0].text == "clicked Discard"
+    assert json.loads(out[1].text) == parent
+
+
+def test_then_ui_reports_failure_when_nothing_can_be_read(monkeypatch):
+    def boom(window=""):
+        raise ValueError("no active window")
+
+    monkeypatch.setattr(srv, "_ui_read", boom)
+    out = srv._acted("clicked", "ui", window="0xdead")
+    assert "ui read failed" in out[1].text
+
+
+def test_pointer_refuses_while_the_session_is_locked(monkeypatch):
+    monkeypatch.setattr(srv.safety, "touch", lambda *a: None)
+    monkeypatch.setattr(srv.trust, "session_locked", lambda: "hyprlock")
+    fired = []
+    monkeypatch.setattr(srv.hinput, "click", lambda *a, **k: fired.append(1))
+    with pytest.raises(srv.trust.TrustError, match="session is locked"):
+        srv.pointer("click", x=10, y=10)
+    assert fired == []  # refused before the click went out
+
+
+def test_pointer_move_is_allowed_while_locked(monkeypatch):
+    # a move only shifts the cursor; it delivers no input to the prompt
+    monkeypatch.setattr(srv.safety, "touch", lambda *a: None)
+    monkeypatch.setattr(srv.trust, "session_locked", lambda: "hyprlock")
+    monkeypatch.setattr(srv.hinput, "move", lambda x, y: None)
+    monkeypatch.setattr(srv.hyprctl, "cursor_pos", lambda: (10, 10))
+    assert srv.pointer("move", x=10, y=10).startswith("move ok")
+
+
+def test_pointer_allow_auth_downgrades_lock_refusal_to_a_note(monkeypatch):
+    monkeypatch.setattr(srv.safety, "touch", lambda *a: None)
+    monkeypatch.setattr(srv.trust, "session_locked", lambda: "hyprlock")
+    monkeypatch.setattr(srv.trust, "guard_pointer", lambda *a, **k: None)
+    monkeypatch.setattr(srv.trust, "covering_layer", lambda x, y: None)
+    monkeypatch.setattr(srv.hinput, "click", lambda *a, **k: None)
+    monkeypatch.setattr(srv.hyprctl, "cursor_pos", lambda: (10, 10))
+    out = srv.pointer("click", x=10, y=10, allow_auth=True)
+    assert "session is locked" in out and "hyprlock" in out

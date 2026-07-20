@@ -45,7 +45,7 @@ Design decisions:
 
 | tool | what it does |
 |---|---|
-| `desktop` | One-call semantic snapshot: monitors, workspaces, windows (address/class/title/geometry), active window, cursor, and layer surfaces (launchers, bars, notification popups, lock screens) with a best-effort kind and geometry |
+| `desktop` | One-call semantic snapshot: monitors, workspaces, windows (address/class/title/geometry), active window, cursor, and layer surfaces (launchers, bars, notification popups) with a best-effort kind and geometry |
 | `screenshot` | Focused monitor, exact window crop by address, or `x,y,WxH` region; returns image + coordinate-mapping metadata; fast JPEG by default (`lossless=true` for PNG); `stable=true` waits for the frame to settle |
 | `zoom` | Native-resolution re-capture around an estimated point (optionally clamped to a window): the precision step before clicking small controls, same metadata contract |
 | `ui` | Read a window's accessibility tree (AT-SPI, GTK/Qt apps that expose one) and return clickable elements by name with exact global coordinates, no screenshot; reports current values too (typed text, slider position, checkbox state); falls back to vision when an app exposes nothing |
@@ -69,7 +69,7 @@ The tools group into five capabilities, ordered most-reliable-and-cheapest first
 
 ### 1. Semantic desktop control (start here)
 
-`desktop` returns the entire window and workspace tree in one call: every window's address, class, title, and geometry, the active window, the cursor, and any layer surfaces on screen (launchers, bars, notification popups, lock screens). `hypr` and `launch` then act on it over IPC in milliseconds: switch workspace, focus/move/close/fullscreen/float a window by address, or start an app.
+`desktop` returns the entire window and workspace tree in one call: every window's address, class, title, and geometry, the active window, the cursor, and any layer surfaces on screen (launchers, bars, notification popups). `hypr` and `launch` then act on it over IPC in milliseconds: switch workspace, focus/move/close/fullscreen/float a window by address, or start an app.
 
 **Use it well:** never take a screenshot to find or arrange windows. Read `desktop`, act on the address you want. `launch` blocks on the real `openwindow` event and hands back the new window's address, so there is nothing to poll or guess; it also relocates single-instance apps (browsers) that ignore workspace rules.
 
@@ -87,7 +87,7 @@ For everything the accessibility tree cannot name, `screenshot` (monitor, window
 
 ### 4. Fewer round-trips: the latency lever
 
-For an agent the model calls dominate task latency, not the desktop, so the real speedups are structural. `sequence` runs an ordered micro-plan (click, type, press enter, wait) in a single call, stopping the moment the desktop changes *structurally* in a way a step did not intend (a window opening, closing, or moving, an unexpected workspace switch, or a keyboard-grabbing launcher or lock screen; it deliberately ignores bare focus changes and notification popups). `then='desktop' | 'screenshot' | 'ui'` fuses a fresh view of the result into the acting call itself. `wait_for` blocks on real compositor events (a window or launcher opening, a title changing, a workspace switch, an urgency hint, screen-sharing starting) instead of sleeping and hoping.
+For an agent the model calls dominate task latency, not the desktop, so the real speedups are structural. `sequence` runs an ordered micro-plan (click, type, press enter, wait) in a single call, stopping the moment the desktop changes *structurally* in a way a step did not intend (a window opening, closing, or moving, an unexpected workspace switch, or a seat-taking launcher or on-screen keyboard; it deliberately ignores bare focus changes and notification popups). `then='desktop' | 'screenshot' | 'ui'` fuses a fresh view of the result into the acting call itself. `wait_for` blocks on real compositor events (a window or launcher opening, a title changing, a workspace switch, an urgency hint, screen-sharing starting) instead of sleeping and hoping.
 
 **Use it well:** collapse a known click/type/enter flow into one `sequence`. After typing into a form, add `then='ui'` to read the effect back in a few hundred exact tokens instead of a screenshot. After a launch or a shortcut that opens something, `wait_for` the event rather than sleeping.
 
