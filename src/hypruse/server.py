@@ -43,8 +43,9 @@ numbered screenshot plus legend when you want to SEE what is clickable,
 then `click_ui(mark=N)`). Use screenshot + zoom when the tree exposes
 nothing (terminals, canvas UIs, Electron/Chrome without a flag). To
 verify an effect without a second round-trip, pass `then='desktop'` (a
-fresh snapshot), `then='ui'` (the acted-on window's controls with current
-values, cheapest after typing or toggling), or `then='screenshot'` to
+fresh snapshot), `then='ui'` (controls with current values, cheapest
+after typing or toggling: the focused window, or for `click_ui` the
+window it just clicked), or `then='screenshot'` to
 the acting call itself instead of calling `desktop` again. `binds` lists
 the owner's own keybinds; to run one, call
 `use_bind` with its combo (synthetic keypresses do NOT trigger compositor

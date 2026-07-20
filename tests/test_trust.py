@@ -394,6 +394,34 @@ def test_guard_keyboard_layer_refuses_window_target_under_launcher(monkeypatch):
         trust.guard_keyboard_layer(True, False)
 
 
+def test_guard_keyboard_layer_window_target_refused_under_lock_despite_allow_auth(
+    monkeypatch,
+):
+    # allow_auth means 'a human intends credential entry HERE', which
+    # contradicts naming some other target window: typing a browser
+    # password into a lock screen that mapped mid-flow must still refuse
+    monkeypatch.setattr(trust.hyprctl, "query", lambda cmd: LOCK_RAW)
+    with pytest.raises(trust.TrustError, match="cannot reach the requested window"):
+        trust.guard_keyboard_layer(True, True)
+
+
+def test_guard_keyboard_layer_refuses_launcher_under_confinement(monkeypatch):
+    # a launcher runs whatever is typed into it and is not a window, so no
+    # scope can contain it: the same escape guard_use_bind refuses
+    monkeypatch.setenv("HYPRUSE_CONFINE", "class:kitty")
+    monkeypatch.setattr(trust.hyprctl, "query", lambda cmd: LAYERS_RAW)
+    with pytest.raises(trust.TrustError, match="cannot be confined"):
+        trust.guard_keyboard_layer(False, False)
+
+
+def test_guard_keyboard_layer_confinement_outranks_allow_auth(monkeypatch):
+    # allow_auth overrides the auth guard, never the confinement scope
+    monkeypatch.setenv("HYPRUSE_CONFINE", "class:kitty")
+    monkeypatch.setattr(trust.hyprctl, "query", lambda cmd: LOCK_RAW)
+    with pytest.raises(trust.TrustError, match="cannot be confined"):
+        trust.guard_keyboard_layer(False, True)
+
+
 def test_guard_keyboard_layer_notes_windowless_typing_into_launcher(monkeypatch):
     # typing with no window while a launcher is up is the legitimate way
     # to drive one: allowed, but the result must say where the keys went

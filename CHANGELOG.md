@@ -34,10 +34,15 @@ All notable changes to this project are documented here. The format follows
   target never saw. `click_ui` refuses when such a layer covers the
   click point; `pointer` appends a warning naming the layer (clicking
   INTO a launcher is the legitimate way to drive one); `keyboard`
-  refuses a window-targeted type while a launcher holds the keyboard
-  grab, refuses typing under a lock screen outright (it is a credential
-  prompt; `allow_auth=true` overrides), and annotates window-less
-  typing with where the keys really went.
+  refuses a `window=`-targeted type while any such layer holds the
+  keyboard grab (the keys provably cannot reach that window, and
+  `allow_auth` does not apply, since intending credential entry
+  contradicts naming another target), refuses typing into a layer
+  entirely while `HYPRUSE_CONFINE` is set (a layer surface is not a
+  window and a launcher runs what it is given, the same escape
+  `use_bind` is refused for), refuses typing under a lock screen unless
+  `allow_auth=true`, and otherwise annotates window-less typing with
+  where the keys really went.
 - `click_ui` with `then='ui'` observes the clicked window, not whatever
   window holds focus after the click (a spawned dialog could steal it).
 - `wait_for('title_change')` waits on `windowtitlev2` only: the

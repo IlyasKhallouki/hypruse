@@ -107,3 +107,26 @@ def test_keyboard_refused_under_a_lock_screen(stub, monkeypatch):
     out = srv.keyboard("type", text="hunter2", allow_auth=True)  # human intent
     assert stub["typed"] == ["hunter2"]
     assert "hyprlock" in out
+
+
+def test_lock_screen_never_absorbs_a_window_targeted_secret(stub, monkeypatch):
+    # HYPRUSE_AUTH_GUARD=strict's documented way to fill a browser login
+    # is keyboard(type, window=0xbrowser, allow_auth=true); if an idle
+    # timeout maps hyprlock in between, that secret must NOT be typed into
+    # the lock prompt just because allow_auth was set for the browser
+    _with_layers(monkeypatch, LOCK_LAYERS)
+    with pytest.raises(srv.trust.TrustError, match="cannot reach the requested window"):
+        srv.keyboard("type", text="browser-secret", window="0xabc", allow_auth=True)
+    assert stub["typed"] == []
+    assert stub["dispatch"] == []
+
+
+def test_windowless_launcher_typing_refused_under_confinement(stub, monkeypatch):
+    # a launcher executes whatever is typed into it, so under confinement
+    # this is arbitrary out-of-scope execution: the same escape use_bind
+    # is refused for
+    monkeypatch.setenv("HYPRUSE_CONFINE", "class:kitty")
+    _with_layers(monkeypatch, LAUNCHER_LAYERS)
+    with pytest.raises(srv.trust.TrustError, match="cannot be confined"):
+        srv.keyboard("type", text="malicious-command")
+    assert stub["typed"] == []

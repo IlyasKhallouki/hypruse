@@ -273,16 +273,25 @@ def guard_keyboard_layer(window_given: bool, allow_auth: bool) -> str:
     """Guard typing against a mapped keyboard-grabbing layer. Synthetic
     keys go to the seat's KEYBOARD focus, and a launcher or lock screen
     holds an exclusive grab no matter which window was focused over IPC,
-    so `keyboard(window=X)` would focus X and then type into the layer
-    while reporting 'typed into X'. Refusals, in order of severity:
-    a lock screen always refuses unless allow_auth (its focused control
-    is a credential prompt); a launcher refuses only when the caller
-    named a window (the 'keys land in that window' contract is provably
-    broken; typing with NO window while a launcher is up is the
-    legitimate way to drive one and instead earns the returned note,
-    appended to the tool result). The on-screen keyboard kind feeds keys
-    rather than eating them, so it does not count. Positive detection
-    and best-effort like covering_layer: unreadable layers yield ''."""
+    so the keys reach the LAYER, never the window the other guards
+    inspect. Refusals, in order:
+
+    1. `window=` names a recipient the keys provably cannot reach, so the
+       tool's own contract is broken; allow_auth does not apply, since
+       'a human intends credential entry here' contradicts naming some
+       other target window.
+    2. Under confinement no scope can contain a layer surface: it is not
+       a window, and a launcher runs whatever is typed into it. Refused
+       wholesale for the same reason as guard_use_bind.
+    3. A lock screen's focused control is a credential prompt, so typing
+       into it needs the explicit allow_auth intent.
+
+    Otherwise the keys legitimately drive the layer (typing into a
+    launcher after use_bind is the documented flow) and the returned
+    note, appended to the tool result, records where they went. The
+    on-screen keyboard kind feeds keys rather than eating them, so it
+    does not count. Positive detection and best-effort like
+    covering_layer: unreadable layers yield ''."""
     try:
         surfaces = hyprctl.parse_layers(hyprctl.query("layers"))
     except Exception:
@@ -292,22 +301,30 @@ def guard_keyboard_layer(window_given: bool, allow_auth: bool) -> str:
         return ""
     # a lock screen outranks a launcher when both are somehow mapped
     grabber = next((s for s in grabbers if s["kind"] == "lock"), grabbers[0])
-    if grabber["kind"] == "lock" and not allow_auth:
+    kind, ns = grabber["kind"], grabber["namespace"]
+    if window_given:
         raise TrustError(
-            f"the lock screen layer {grabber['namespace']!r} holds the keyboard: "
-            "typing now would feed a credential prompt. Pass allow_auth=true "
-            "only if a human intends that credential entry."
+            f"the {kind} layer {ns!r} holds the keyboard grab, so keys cannot "
+            "reach the requested window. Drive the layer itself (call keyboard "
+            "without window=), or close it first (usually esc)."
         )
-    if grabber["kind"] != "lock" and window_given:
+    scope = _confine_scope()
+    if scope is not None:
         raise TrustError(
-            f"the {grabber['kind']} layer {grabber['namespace']!r} holds the "
-            "keyboard grab, so keys cannot reach the requested window. Drive "
-            "the launcher itself (call keyboard without window=), or close it "
-            "first (usually esc)."
+            f"the {kind} layer {ns!r} holds the keyboard grab, and a layer "
+            f"surface is not a window, so it cannot be confined "
+            f"({_describe(scope)}); typing is refused while HYPRUSE_CONFINE "
+            "is set. Close the layer first (usually esc)."
+        )
+    if kind == "lock" and not allow_auth:
+        raise TrustError(
+            f"the lock screen layer {ns!r} holds the keyboard: typing now "
+            "would feed a credential prompt. Pass allow_auth=true only if a "
+            "human intends that credential entry."
         )
     return (
-        f"; NOTE: the {grabber['kind']} layer {grabber['namespace']!r} holds "
-        "the keyboard grab, so the keys went to it, not to the focused window"
+        f"; NOTE: the {kind} layer {ns!r} holds the keyboard grab, so the "
+        "keys went to it, not to the focused window"
     )
 
 
