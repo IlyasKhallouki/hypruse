@@ -84,6 +84,26 @@ All notable changes to this project are documented here. The format follows
   import-time assertion now rejects any over-length entry.
 - Under a lock, the keyboard-grab note no longer also fires and
   contradicts the lock note about where the keys went.
+- The session-lock guard now refuses (not just annotates) a
+  `window=`-targeted or confined input even with `allow_auth`, closing a
+  regression where `keyboard(type, window=X, allow_auth=true)` under a
+  lock would type X's secret into the credential prompt: naming a target
+  window, or a confinement scope, contradicts intending to drive the
+  prompt, so it is refused the same way a keyboard-grabbing layer is.
+  `click_ui` refuses under a lock outright (it always targets a window
+  control that the input cannot reach). `pointer` emits a single note,
+  not two contradictory ones, when a lock and a covering layer coincide.
+- A windowless `keyboard` type now fails closed under `HYPRUSE_CONFINE`
+  when the active window cannot be resolved because hyprctl is
+  unreadable, instead of skipping the confinement check (the virtual
+  keyboard delivers keys even when hyprctl is down). "Nothing focused"
+  and "the compositor is unreadable" are now distinguished.
+- The strict-mode password-field refusal runs before the `focuswindow`
+  dispatch, so a refused type no longer moves the human's focus first.
+- `swaylock-effects` is packaged as a drop-in that ships
+  `/usr/bin/swaylock` (comm `swaylock`, already covered), so the
+  fabricated `swaylock-effect` locker entry was removed rather than
+  modeling a `/proc` name no real packaging produces.
 
 ### Changed
 - Read-only mode ships its own server instructions and observation-tool

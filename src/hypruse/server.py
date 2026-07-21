@@ -277,6 +277,20 @@ def _active_client() -> dict[str, Any] | None:
     return None
 
 
+def _guarded_active_client() -> dict[str, Any] | None:
+    """The focused client for a guard that must fail CLOSED. Returns None
+    only when nothing is genuinely focused (a bare key must still work);
+    an IPC error propagates instead of being swallowed, so confinement is
+    never skipped just because hyprctl could not be read (the virtual
+    keyboard delivers keys regardless). This is the difference between
+    'no active window' and 'the compositor is unreadable'."""
+    try:
+        return _resolve_window("active")
+    except ValueError:
+        return None  # genuinely nothing focused; a bare key still works
+    # HyprctlError (IPC down/timeout) propagates: the guard fails closed
+
+
 def _ui_read(window: str = "", name: str = "", actionable: bool = True) -> list[Any] | str:
     """Shared body of the `ui` tool: a window's accessible elements with
     global click points and current values, or a fall-back-to-vision
@@ -534,9 +548,12 @@ def pointer(
     trust.guard_seat()
     note = ""
     if action != "move":
-        # a locked session routes every event to its credential prompt,
-        # so no window can receive this; a move only shifts the cursor
-        note = trust.guard_session_lock(allow_auth)
+        # a locked session routes every event to its credential prompt, so
+        # no window can receive this (a bare click can legitimately AIM at
+        # the prompt, so window_given=False: note on allow_auth, else
+        # refuse); a move only shifts the cursor. A lock DOMINATES the
+        # layer note below: when locked, the input never reached any layer.
+        note = trust.guard_session_lock(False, allow_auth)
     if action == "move":
         # a move only repositions the cursor; the input-delivering actions
         # below are the ones the confinement and auth guards gate
@@ -545,18 +562,18 @@ def pointer(
         hinput.move(x, y)
     elif action == "click":
         trust.guard_pointer(x, y, allow_auth)  # None x/y = click at current cursor
-        note += _layer_note(x, y)
+        note = note or _layer_note(x, y)
         hinput.click(x, y, button=button, double=double)
     elif action == "drag":
         if None in (x, y, to_x, to_y):
             raise ValueError("drag needs x, y, to_x, to_y")
         trust.guard_pointer(x, y, allow_auth)
         trust.guard_pointer(to_x, to_y, allow_auth)  # the drag ends elsewhere; guard that too
-        note += _layer_note(x, y)
+        note = note or _layer_note(x, y)
         hinput.drag(x, y, to_x, to_y, button=button)  # type: ignore[arg-type]
     elif action == "scroll":
         trust.guard_pointer(x, y, allow_auth)  # None x/y = scroll at current cursor
-        note += _layer_note(x, y)
+        note = note or _layer_note(x, y)
         hinput.scroll(dy=scroll_dy, dx=scroll_dx, x=x, y=y)
     else:
         raise ValueError(f"unknown action {action!r}: move|click|drag|scroll")
@@ -597,31 +614,36 @@ def keyboard(
         raise ValueError("key needs keys")
     addr_str = _addr(window) if window else ""  # validate the address format first
     # a locked session eats all input, and a mapped launcher layer holds
-    # the keyboard grab regardless of window focus: refuse when that
-    # breaks the caller's stated intent, else report it (see the guards).
-    # A lock DOMINATES: any layer state is behind it, so on the allow_auth
-    # path the lock note stands alone rather than being contradicted by a
-    # keyboard-grab note about a launcher the human cannot even see.
-    note = trust.guard_session_lock(allow_auth)
+    # the keyboard grab regardless of window focus: both refuse when that
+    # breaks the caller's stated intent (a named window, or a confinement
+    # scope), else report it. A lock DOMINATES a mere layer, so its note
+    # (allow_auth path, windowless, unconfined) stands alone rather than
+    # being joined by a keyboard-grab note about a launcher behind it.
+    note = trust.guard_session_lock(bool(window), allow_auth)
     if not note:
         note = trust.guard_keyboard_layer(bool(window), allow_auth)
     # resolve the window keystrokes will land in, for the confinement and
     # auth guards, but only when a guard is active (it costs a query). When
     # no window= is given we best-effort the focused one; a bare key (esc,
-    # F5) with nothing focused must still work.
+    # F5) with nothing focused must still work, but a compositor we CANNOT
+    # read must fail closed under an active guard (the wire delivers keys
+    # even when hyprctl is down), never silently skip confinement.
     target = None
     if trust.guards_window_input():
-        target = _resolve_window(window) if window else _active_client()
+        target = _resolve_window(window) if window else _guarded_active_client()
         if target is not None:
             trust.guard_client(target)  # confinement
             trust.guard_auth_client(target, allow_auth)
+            if action == "type":
+                # the a11y focused-role read is per-pid, independent of
+                # compositor focus, so it runs BEFORE the focuswindow
+                # dispatch: a refused call must not move the human's focus
+                trust.guard_password_field(target, allow_auth)
     if window:
         hyprctl.dispatch("focuswindow", addr_str)
         time.sleep(0.05)  # let keyboard focus settle before typing into it
     into = f" into {window}" if window else ""
     if action == "type":
-        if target is not None:
-            trust.guard_password_field(target, allow_auth)  # refuse typing a password
         hinput.type_text(text)
         trust.remember_seat()
         return _acted(f"typed {len(text)} characters{into}{note}", then)
@@ -694,10 +716,11 @@ def click_ui(
     trust.guard_client(client)  # confinement
     trust.guard_auth_client(client, allow_auth)
     # a locked session, or a layer over the point, would swallow the click
-    # while the result claimed success; refuse before any side effect. On
-    # the allow_auth path a lock does not refuse but returns a note, which
-    # must reach the result or click_ui would report a control it never hit.
-    note = trust.guard_session_lock(allow_auth)
+    # while the result claimed success; refuse before any side effect.
+    # click_ui always targets a specific window control, so under a lock
+    # the click provably cannot reach it (window_given=True always refuses,
+    # even with allow_auth: there is no "drive the prompt by control name").
+    trust.guard_session_lock(True, allow_auth)
     trust.guard_covering_layer(x, y)
     hyprctl.dispatch("focuswindow", f"address:{client['address']}")
     time.sleep(0.05)  # focus (and a possible workspace switch) settles first
@@ -706,7 +729,7 @@ def click_ui(
     # observe the CLICKED window, not whatever holds focus after the click
     # (the click itself may have spawned a dialog that stole it)
     return _acted(
-        f"clicked {desc} at ({x}, {y}) in {client.get('class', '')}{note}",
+        f"clicked {desc} at ({x}, {y}) in {client.get('class', '')}",
         then,
         window=client["address"],
     )

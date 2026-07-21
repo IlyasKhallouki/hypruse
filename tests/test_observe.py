@@ -334,3 +334,52 @@ def test_acted_ui_fallback_only_when_a_window_was_named(monkeypatch):
     out = srv._acted("did it", "ui")  # no window
     assert calls == [""]  # tried once, did NOT retry
     assert "ui read failed" in out[1].text
+
+
+def test_pointer_guard_pointer_wiring_refuses_out_of_scope(monkeypatch):
+    # integration: guard_pointer is NOT stubbed here, so the real
+    # confinement check runs on the windows under the click point
+    monkeypatch.setenv("HYPRUSE_CONFINE", "class:kitty")
+    monkeypatch.setenv("HYPRUSE_AUTH_GUARD", "0")
+    monkeypatch.setattr(srv.safety, "touch", lambda *a: None)
+    mon = [{"name": "m", "x": 0, "y": 0, "width": 1920, "height": 1080,
+            "scale": 1.0, "activeWorkspace": {"id": 1}}]
+    windows = [{"address": "0xff", "class": "firefox", "at": [0, 0], "size": [200, 200],
+                "workspace": {"id": 1}, "mapped": True}]
+    monkeypatch.setattr(srv.hyprctl, "batch_query", lambda cmds: [mon, windows])
+    fired = []
+    monkeypatch.setattr(srv.hinput, "click", lambda *a, **k: fired.append(1))
+    with pytest.raises(srv.trust.TrustError, match="confinement scope"):
+        srv.pointer("click", x=50, y=50)  # over the out-of-scope firefox
+    assert fired == []
+
+
+def test_pointer_guard_pointer_wiring_refuses_auth_dialog(monkeypatch):
+    # the default-on auth guard refuses a click over a polkit dialog, wired
+    monkeypatch.setattr(srv.safety, "touch", lambda *a: None)
+    mon = [{"name": "m", "x": 0, "y": 0, "width": 1920, "height": 1080,
+            "scale": 1.0, "activeWorkspace": {"id": 1}}]
+    windows = [{"address": "0xpk", "class": "hyprpolkitagent", "at": [0, 0],
+                "size": [400, 200], "workspace": {"id": 1}, "mapped": True}]
+    monkeypatch.setattr(srv.hyprctl, "batch_query", lambda cmds: [mon, windows])
+    fired = []
+    monkeypatch.setattr(srv.hinput, "click", lambda *a, **k: fired.append(1))
+    with pytest.raises(srv.trust.TrustError, match="authentication dialog"):
+        srv.pointer("click", x=10, y=10)
+    assert fired == []
+
+
+def test_pointer_single_note_under_lock(monkeypatch):
+    # a lock DOMINATES the layer note: only one note, not two contradictory
+    # ones about where the input went
+    monkeypatch.setattr(srv.safety, "touch", lambda *a: None)
+    monkeypatch.setattr(srv.trust, "session_locked", lambda: "hyprlock")
+    monkeypatch.setattr(srv.trust, "guard_pointer", lambda *a, **k: None)
+    monkeypatch.setattr(
+        srv.trust, "covering_layer", lambda x, y: {"namespace": "rofi", "kind": "launcher"}
+    )
+    monkeypatch.setattr(srv.hinput, "click", lambda *a, **k: None)
+    monkeypatch.setattr(srv.hyprctl, "cursor_pos", lambda: (10, 10))
+    out = srv.pointer("click", x=10, y=10, allow_auth=True)
+    assert out.count("NOTE") == 1  # not two
+    assert "session is locked" in out and "rofi" not in out

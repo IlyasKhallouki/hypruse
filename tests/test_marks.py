@@ -210,9 +210,29 @@ def test_click_ui_refuses_while_the_session_is_locked(wired, monkeypatch):
     assert wired["dispatch"] == []  # refused before focusing
 
 
-def test_click_ui_allow_auth_lock_note_reaches_the_result(wired, monkeypatch):
-    # on the allow_auth path the lock does not refuse but returns a note;
-    # click_ui must surface it, or it reports a control it never hit
+def test_click_ui_refuses_under_lock_even_with_allow_auth(wired, monkeypatch):
+    # click_ui always targets a specific window control, so under a lock
+    # the click cannot reach it: allow_auth (drive the prompt) does not
+    # apply, since there is no "click a control by name" on a lock screen
     monkeypatch.setattr(srv.trust, "session_locked", lambda: "hyprlock")
-    out = srv.click_ui(name="Save", allow_auth=True)
-    assert "session is locked" in out and "hyprlock" in out
+    with pytest.raises(srv.trust.TrustError, match="cannot reach the requested window"):
+        srv.click_ui(name="Save", allow_auth=True)
+    assert wired["clicks"] == []
+    assert wired["dispatch"] == []
+
+
+def test_click_ui_confinement_wiring_refuses_out_of_scope(wired, monkeypatch):
+    # integration: guard_client is real here; the 'gedit' target is out of
+    # a kitty-only scope, so the click is refused before any side effect
+    monkeypatch.setenv("HYPRUSE_CONFINE", "class:kitty")
+    with pytest.raises(srv.trust.TrustError, match="confinement scope"):
+        srv.click_ui(name="Save")
+    assert wired["clicks"] == []
+    assert wired["dispatch"] == []
+
+
+def test_click_ui_auth_wiring_refuses_polkit(wired, monkeypatch):
+    wired["client"]["class"] = "hyprpolkitagent"
+    with pytest.raises(srv.trust.TrustError, match="authentication dialog"):
+        srv.click_ui(name="Save")
+    assert wired["clicks"] == []

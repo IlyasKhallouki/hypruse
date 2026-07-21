@@ -302,17 +302,22 @@ def _level_rank(level: str) -> int:
 # = 15 characters, so every entry here MUST be <= 15 chars or it can never
 # match; _COMM_MAX below enforces that at import time. A locker whose
 # binary name is longer would need its truncated form listed instead.
+# swaylock-effects is packaged as a drop-in that ships /usr/bin/swaylock
+# (Provides/Conflicts swaylock), so its comm is "swaylock", already
+# covered; it is deliberately NOT listed under a fabricated
+# "swaylock-effect" name that no real packaging produces.
 _LOCKER_COMMS = frozenset(
     {
         "hyprlock",
         "swaylock",
-        "swaylock-effect",  # swaylock-effects, truncated by the kernel to 15
         "gtklock",
         "waylock",
     }
 )
 
-_COMM_MAX = 15  # Linux TASK_COMM_LEN (16) minus the trailing NUL
+_COMM_MAX = 15  # Linux TASK_COMM_LEN (16) minus the trailing NUL: the kernel
+# truncates /proc/PID/comm to this, so a longer entry can never match and
+# must be listed in its truncated form instead. Enforced at import.
 assert all(len(c) <= _COMM_MAX for c in _LOCKER_COMMS), (
     "a _LOCKER_COMMS entry longer than 15 chars can never match /proc comm"
 )
@@ -343,15 +348,39 @@ def session_locked() -> str | None:
     return None
 
 
-def guard_session_lock(allow_auth: bool) -> str:
+def guard_session_lock(window_given: bool, allow_auth: bool) -> str:
     """Refuse input while the session is locked. Every event, pointer or
-    keyboard, reaches the lock surface, which is a credential prompt: the
-    agent cannot act on any window, and typing there feeds a password
-    field. allow_auth downgrades this to the returned note, for the case
-    where a human genuinely wants the agent to unlock."""
+    keyboard, reaches the lock surface, which is a credential prompt, so
+    it cannot reach any window. The refusal order mirrors
+    guard_keyboard_layer, because a lock is the same shape of problem:
+
+    1. `window=` names a recipient the input provably cannot reach, so
+       the contract is broken; allow_auth does not apply, since intending
+       to drive the credential prompt contradicts naming a target window.
+       (This is the case that would otherwise leak a browser secret into
+       the lock prompt when the screen locks mid-flow.)
+    2. Under confinement the credential prompt is not a confinable
+       window, so it is refused wholesale, the same escape guard_use_bind
+       and guard_keyboard_layer refuse.
+    3. Otherwise the input reaches the prompt: allow_auth means a human
+       is deliberately driving the unlock, and earns the returned note;
+       without it, feeding a credential prompt unasked is refused."""
     locker = session_locked()
     if locker is None:
         return ""
+    if window_given:
+        raise TrustError(
+            f"the session is locked ({locker}), so input cannot reach the "
+            "requested window; it would go to the lock's credential prompt. "
+            "Unlock the session first."
+        )
+    scope = _confine_scope()
+    if scope is not None:
+        raise TrustError(
+            f"the session is locked ({locker}); its credential prompt is not a "
+            f"confinable window ({_describe(scope)}), so input is refused while "
+            "HYPRUSE_CONFINE is set. Unlock the session first."
+        )
     if not allow_auth:
         raise TrustError(
             f"the session is locked ({locker}): all input goes to its "

@@ -501,15 +501,33 @@ def test_session_locked_fails_open_on_unreadable_proc(monkeypatch):
 
 def test_guard_session_lock_refuses_and_allow_auth_downgrades(monkeypatch):
     monkeypatch.setattr(trust, "session_locked", lambda: "hyprlock")
+    # windowless, unconfined: refuse without allow_auth, note with it
     with pytest.raises(trust.TrustError, match="session is locked"):
-        trust.guard_session_lock(allow_auth=False)
-    note = trust.guard_session_lock(allow_auth=True)
+        trust.guard_session_lock(window_given=False, allow_auth=False)
+    note = trust.guard_session_lock(window_given=False, allow_auth=True)
     assert "hyprlock" in note and "credential prompt" in note
+
+
+def test_guard_session_lock_window_target_refuses_despite_allow_auth(monkeypatch):
+    # a named window's input provably cannot reach it under a lock, so
+    # allow_auth (intent to drive the prompt) contradicts naming a target:
+    # this is the browser-secret-into-the-lock-prompt leak, refused
+    monkeypatch.setattr(trust, "session_locked", lambda: "hyprlock")
+    with pytest.raises(trust.TrustError, match="cannot reach the requested window"):
+        trust.guard_session_lock(window_given=True, allow_auth=True)
+
+
+def test_guard_session_lock_refuses_under_confinement_despite_allow_auth(monkeypatch):
+    # the credential prompt is not a confinable window
+    monkeypatch.setenv("HYPRUSE_CONFINE", "class:kitty")
+    monkeypatch.setattr(trust, "session_locked", lambda: "hyprlock")
+    with pytest.raises(trust.TrustError, match="confinable window"):
+        trust.guard_session_lock(window_given=False, allow_auth=True)
 
 
 def test_guard_session_lock_silent_when_unlocked(monkeypatch):
     monkeypatch.setattr(trust, "session_locked", lambda: None)
-    assert trust.guard_session_lock(allow_auth=False) == ""
+    assert trust.guard_session_lock(window_given=True, allow_auth=False) == ""
 
 
 # --- topmost surface resolution ----------------------------------------------
@@ -576,7 +594,6 @@ import pytest as _pytest  # noqa: E402
         ("swaylock", "swaylock"),
         ("gtklock", "gtklock"),
         ("waylock", "waylock"),
-        ("swaylock-effect", "swaylock-effect"),  # 15-char kernel-truncated form
         ("kitty", None),
     ],
 )
@@ -695,3 +712,43 @@ def test_windows_under_ignores_unmapped_clients(monkeypatch):
     ]
     _batch(monkeypatch, MON, windows)
     trust.guard_pointer(50, 50)  # the only covering window is unmapped: allowed
+
+
+def test_guard_keyboard_layer_lock_outranks_launcher(monkeypatch):
+    # both a legacy layer-shell lock and a launcher mapped: the lock wins,
+    # so it is treated as a credential prompt, not a drivable launcher
+    raw = {
+        "DP-1": {
+            "levels": {
+                "3": [
+                    {"namespace": "rofi", "x": 0, "y": 0, "w": 100, "h": 100},
+                    {"namespace": "hyprlock", "x": 0, "y": 0, "w": 100, "h": 100},
+                ]
+            }
+        }
+    }
+    monkeypatch.setattr(trust.hyprctl, "query", lambda cmd: raw)
+    with pytest.raises(trust.TrustError, match="hyprlock"):
+        trust.guard_keyboard_layer(False, False)  # lock refuses even windowless
+
+
+def test_guard_keyboard_layer_refusals_carry_dismiss_advice(monkeypatch):
+    # both the window-target and confinement refusals must render the
+    # per-kind remedy, not just name the layer
+    monkeypatch.setattr(trust.hyprctl, "query", lambda cmd: LAYERS_RAW)
+    with pytest.raises(trust.TrustError) as exc1:
+        trust.guard_keyboard_layer(True, False)
+    assert trust._dismiss_advice("launcher") in str(exc1.value)
+    monkeypatch.setenv("HYPRUSE_CONFINE", "class:kitty")
+    with pytest.raises(trust.TrustError) as exc2:
+        trust.guard_keyboard_layer(False, False)
+    assert trust._dismiss_advice("launcher") in str(exc2.value)
+
+
+def test_level_rank_orders_the_full_named_scale(monkeypatch):
+    # pin the whole ordering, not just 'below overlay': an unknown level
+    # must sit strictly below EVERY named level, including the lowest
+    for i, name in enumerate(trust.hyprctl.LAYER_LEVELS):
+        assert trust._level_rank(name) == i
+    assert trust._level_rank("99") < trust._level_rank(trust.hyprctl.LAYER_LEVELS[0])
+    assert trust._level_rank("nonsense") == -1
