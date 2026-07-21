@@ -297,15 +297,24 @@ def _level_rank(level: str) -> int:
 # the instant the locking client exits, so a live locker means a locked
 # (or actively locking) session. Older swaylock/gtklock releases drew
 # their lock with layer-shell instead, which `layer_kind` still catches.
+#
+# Matched against /proc/PID/comm, which the kernel caps at TASK_COMM_LEN-1
+# = 15 characters, so every entry here MUST be <= 15 chars or it can never
+# match; _COMM_MAX below enforces that at import time. A locker whose
+# binary name is longer would need its truncated form listed instead.
 _LOCKER_COMMS = frozenset(
     {
         "hyprlock",
         "swaylock",
-        "swaylock-effects",
+        "swaylock-effect",  # swaylock-effects, truncated by the kernel to 15
         "gtklock",
         "waylock",
-        "gtygra",  # hyprlock's binary name on some older packagings
     }
+)
+
+_COMM_MAX = 15  # Linux TASK_COMM_LEN (16) minus the trailing NUL
+assert all(len(c) <= _COMM_MAX for c in _LOCKER_COMMS), (
+    "a _LOCKER_COMMS entry longer than 15 chars can never match /proc comm"
 )
 
 

@@ -122,3 +122,31 @@ def test_title_change_waits_on_v2_only(monkeypatch):
     out = srv.wait_for("title_change", match="inbox")
     assert out["title"] == "Inbox (3)"
     assert stream.calls[0][0] == {"windowtitlev2"}
+
+
+def test_layer_open_precheck_matches_by_substring(monkeypatch):
+    # real launcher namespaces are rarely bare words (wofi-dialog,
+    # swaync-notification-window), so the pre-check must be a substring
+    # match, not exact, or it fails to rescue the late-subscribe case
+    raw = {"DP-1": {"levels": {"3": [
+        {"namespace": "wofi-dialog", "x": 0, "y": 0, "w": 8, "h": 8}]}}}
+    monkeypatch.setattr(srv.safety, "touch", lambda *a: None)
+    monkeypatch.setattr(srv.hyprctl, "query", lambda cmd: raw)
+
+    def boom():
+        raise AssertionError("must not subscribe when already satisfied")
+
+    monkeypatch.setattr(srv.events, "EventStream", boom)
+    out = srv.wait_for("layer_open", match="wofi")  # substring of 'wofi-dialog'
+    assert out.get("already") is True
+
+
+def test_layer_open_wait_listens_only_for_openlayer(monkeypatch):
+    # widening the names set to also accept closelayer would let a launcher
+    # CLOSING satisfy a wait for it OPENING
+    monkeypatch.setattr(srv.safety, "touch", lambda *a: None)
+    monkeypatch.setattr(srv.hyprctl, "query", lambda cmd: {})
+    stream = OneShotStream(("openlayer", {"namespace": "rofi"}))
+    monkeypatch.setattr(srv.events, "EventStream", lambda: stream)
+    srv.wait_for("layer_open", match="rofi")
+    assert stream.calls[0][0] == {"openlayer"}

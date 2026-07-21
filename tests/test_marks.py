@@ -198,3 +198,21 @@ def test_click_ui_refuses_under_a_focus_stealing_layer(wired, monkeypatch):
     assert probed == [(150, 80)]  # the guard checked the ACTUAL click point
     assert wired["clicks"] == []
     assert wired["dispatch"] == []  # not even focused
+
+
+def test_click_ui_refuses_while_the_session_is_locked(wired, monkeypatch):
+    # click_ui is one of the three tools the session-lock guard protects;
+    # without this the guard is dead code at this call site (suite green)
+    monkeypatch.setattr(srv.trust, "session_locked", lambda: "hyprlock")
+    with pytest.raises(srv.trust.TrustError, match="session is locked"):
+        srv.click_ui(name="Save")
+    assert wired["clicks"] == []
+    assert wired["dispatch"] == []  # refused before focusing
+
+
+def test_click_ui_allow_auth_lock_note_reaches_the_result(wired, monkeypatch):
+    # on the allow_auth path the lock does not refuse but returns a note;
+    # click_ui must surface it, or it reports a control it never hit
+    monkeypatch.setattr(srv.trust, "session_locked", lambda: "hyprlock")
+    out = srv.click_ui(name="Save", allow_auth=True)
+    assert "session is locked" in out and "hyprlock" in out

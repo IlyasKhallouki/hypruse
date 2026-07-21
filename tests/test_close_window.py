@@ -84,3 +84,32 @@ def test_close_window_without_socket_fires_and_forgets(monkeypatch):
     out = srv.hypr("close_window", target="0xdead")
     assert out == "asked 0xdead to close"
     assert dispatched == [("closewindow", "address:0xdead")]
+
+
+def test_close_window_waits_a_usable_duration(monkeypatch):
+    # the whole point is to WAIT for the destroy; a zero timeout would make
+    # the wait pointless, so pin that the timeout passed is the real bound
+    streams = _wired(monkeypatch, [], hit=("closewindow", {"address": "0xdead"}))
+    srv.hypr("close_window", target="0xdead")
+    assert streams[-1].timeout == srv._CLOSE_WAIT_S
+    assert srv._CLOSE_WAIT_S >= 0.5  # a usable wait, not a token one
+
+
+def test_close_window_degrades_when_the_socket_dies_mid_wait(monkeypatch):
+    # the dispatch already fired; a socket dying DURING the wait must not
+    # turn a probably-successful close into a raw tool error
+    order = []
+
+    class DyingStream(FakeStream):
+        def wait_for(self, names, matcher, timeout):
+            order.append("wait")
+            raise srv.events.EventError("event socket died")
+
+    monkeypatch.setattr(srv.safety, "touch", lambda *a: None)
+    monkeypatch.setattr(
+        srv.events, "EventStream", lambda: DyingStream(None, order)
+    )
+    monkeypatch.setattr(srv.hyprctl, "dispatch", lambda *a: order.append(("dispatch", a)))
+    out = srv.hypr("close_window", target="0xdead")
+    assert "socket dropped" in out and "0xdead" in out
+    assert order == ["subscribe", ("dispatch", ("closewindow", "address:0xdead")), "wait"]

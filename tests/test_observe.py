@@ -236,14 +236,22 @@ def test_then_ui_reports_failure_when_nothing_can_be_read(monkeypatch):
     assert "ui read failed" in out[1].text
 
 
-def test_pointer_refuses_while_the_session_is_locked(monkeypatch):
+@pytest.mark.parametrize(
+    "action,extra",
+    [("click", {}), ("scroll", {"scroll_dy": 3}), ("drag", {"to_x": 70, "to_y": 80})],
+)
+def test_pointer_refuses_while_the_session_is_locked(monkeypatch, action, extra):
+    # every input-delivering arm must refuse under a lock, not just click;
+    # narrowing the guard to click alone left drag/scroll firing into the
+    # credential prompt with the suite green
     monkeypatch.setattr(srv.safety, "touch", lambda *a: None)
     monkeypatch.setattr(srv.trust, "session_locked", lambda: "hyprlock")
     fired = []
-    monkeypatch.setattr(srv.hinput, "click", lambda *a, **k: fired.append(1))
+    for name in ("click", "scroll", "drag"):
+        monkeypatch.setattr(srv.hinput, name, lambda *a, **k: fired.append(1))
     with pytest.raises(srv.trust.TrustError, match="session is locked"):
-        srv.pointer("click", x=10, y=10)
-    assert fired == []  # refused before the click went out
+        srv.pointer(action, x=10, y=10, **extra)
+    assert fired == []  # refused before any input went out
 
 
 def test_pointer_move_is_allowed_while_locked(monkeypatch):
@@ -264,3 +272,65 @@ def test_pointer_allow_auth_downgrades_lock_refusal_to_a_note(monkeypatch):
     monkeypatch.setattr(srv.hyprctl, "cursor_pos", lambda: (10, 10))
     out = srv.pointer("click", x=10, y=10, allow_auth=True)
     assert "session is locked" in out and "hyprlock" in out
+
+
+def test_ui_rearms_the_strict_seat_guard(monkeypatch):
+    # ui() is an observation of current state, so it must re-arm the strict
+    # guard like desktop()/screenshot do, or the recommended read-then-act
+    # flow stays locked after a human nudge
+    monkeypatch.setenv("HYPRUSE_STRICT", "1")
+    monkeypatch.setattr(srv.safety, "touch", lambda *a: None)
+    srv.trust._seat.update(cursor=(1, 1), active="0xa")
+    monkeypatch.setattr(srv.hyprctl, "cursor_pos", lambda: (9, 9))
+    monkeypatch.setattr(srv.hyprctl, "query", lambda cmd: {"address": "0xb"})
+    with pytest.raises(srv.trust.TrustError, match="seat moved"):
+        srv.trust.guard_seat()
+    monkeypatch.setattr(srv, "_ui_read", lambda *a, **k: [])
+    srv.ui()
+    srv.trust.guard_seat()  # re-armed: no raise
+
+
+def test_marks_rearms_the_strict_seat_guard(monkeypatch):
+    monkeypatch.setenv("HYPRUSE_STRICT", "1")
+    monkeypatch.setattr(srv.safety, "touch", lambda *a: None)
+    srv.trust._seat.update(cursor=(1, 1), active="0xa")
+    monkeypatch.setattr(srv.hyprctl, "cursor_pos", lambda: (9, 9))
+    monkeypatch.setattr(
+        srv, "_resolve_window",
+        lambda w="": {"address": "0xa", "at": [0, 0], "size": [10, 10], "class": "x"},
+    )
+    monkeypatch.setattr(
+        srv.hyprctl, "query", lambda cmd: {"address": "0xb"} if cmd == "activewindow" else {}
+    )
+    monkeypatch.setattr(
+        srv, "_ui_read",
+        lambda w="", name="", actionable=True: [
+            {"role": "button", "name": "Ok", "x": 5, "y": 5, "clickable": True}
+        ],
+    )
+    monkeypatch.setattr(
+        srv, "_grab_env",
+        lambda **kw: (b"IMG", {"geometry": [0, 0, 10, 10], "scale": 1.0,
+                               "image": [10, 10], "format": "jpeg"}),
+    )
+    monkeypatch.setattr(srv, "_draw_marks", lambda *a: None)
+    with pytest.raises(srv.trust.TrustError, match="seat moved"):
+        srv.trust.guard_seat()
+    srv.marks(window="0xa")
+    srv.trust.guard_seat()  # re-armed
+
+
+def test_acted_ui_fallback_only_when_a_window_was_named(monkeypatch):
+    # the focused-window fallback is conditional on window= having been
+    # passed; without a named window a failing read stays a failure and is
+    # never silently retried against a different window
+    calls = []
+
+    def ui_read(window=""):
+        calls.append(window)
+        raise ValueError("no active window")
+
+    monkeypatch.setattr(srv, "_ui_read", ui_read)
+    out = srv._acted("did it", "ui")  # no window
+    assert calls == [""]  # tried once, did NOT retry
+    assert "ui read failed" in out[1].text

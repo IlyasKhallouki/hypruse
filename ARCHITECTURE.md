@@ -105,9 +105,10 @@ session is invisible to both: modern lockers (hyprlock, swaylock >=
 they appear in neither `clients` nor `layers`, and Hyprland exposes no
 lock state over IPC. `trust.session_locked` therefore detects the
 locker PROCESS, since the protocol returns the session the instant that
-client exits, and every input tool refuses while it is up unless
-`allow_auth` says a human wants the agent driving the prompt. The
-guards are the confinement
+client exits, and the input-delivering tools (`keyboard`, `click_ui`,
+and `pointer`'s click/drag/scroll; a bare `pointer` move only shifts the
+cursor) refuse while it is up unless `allow_auth` says a human wants the
+agent driving the prompt. The guards are the confinement
 path over the same happy path above: step 4 is refused if the point is over
 an out-of-scope or authentication window, step 2 if the target is out of
 scope.

@@ -327,7 +327,7 @@ def test_notify_capture_rate_limited(monkeypatch):
 LAYERS_RAW = {
     "DP-1": {
         "levels": {
-            "2": [{"namespace": "waybar", "x": 0, "y": 0, "w": 1920, "h": 30}],
+            "1": [{"namespace": "waybar", "x": 0, "y": 0, "w": 1920, "h": 30}],
             "3": [{"namespace": "rofi", "x": 560, "y": 300, "w": 800, "h": 480}],
         }
     }
@@ -383,7 +383,7 @@ LOCK_RAW = {
 
 def test_guard_keyboard_layer_quiet_without_grabbers(monkeypatch):
     # bars and notification popups do not hold the keyboard
-    raw = {"DP-1": {"levels": {"2": [{"namespace": "waybar", "x": 0, "y": 0,
+    raw = {"DP-1": {"levels": {"1": [{"namespace": "waybar", "x": 0, "y": 0,
                                       "w": 1920, "h": 30}]}}}
     monkeypatch.setattr(trust.hyprctl, "query", lambda cmd: raw)
     assert trust.guard_keyboard_layer(True, False) == ""
@@ -561,3 +561,137 @@ def test_lock_layer_refusal_does_not_recommend_a_path_that_refuses(monkeypatch):
     with pytest.raises(trust.TrustError) as exc:
         trust.guard_keyboard_layer(True, False)
     assert "without window=" not in str(exc.value)
+
+
+# --- locker coverage across all supported lockers ----------------------------
+
+
+import pytest as _pytest  # noqa: E402
+
+
+@_pytest.mark.parametrize(
+    "comm,expected",
+    [
+        ("hyprlock", "hyprlock"),
+        ("swaylock", "swaylock"),
+        ("gtklock", "gtklock"),
+        ("waylock", "waylock"),
+        ("swaylock-effect", "swaylock-effect"),  # 15-char kernel-truncated form
+        ("kitty", None),
+    ],
+)
+def test_every_supported_locker_is_detected(monkeypatch, tmp_path, comm, expected):
+    # the whole detection surface is _LOCKER_COMMS; a test that only ever
+    # feeds 'hyprlock' lets the other entries rot into dead code
+    d = tmp_path / "42"
+    d.mkdir()
+    (d / "comm").write_text(comm + "\n")
+    monkeypatch.setattr(trust, "_PROC", str(tmp_path))
+    assert real_session_locked() == expected
+
+
+def test_every_locker_comm_can_actually_match_the_kernel_cap():
+    # /proc/PID/comm is capped at 15 chars; an entry longer than that is
+    # dead on the real kernel no matter what a fixture writes
+    assert all(len(c) <= trust._COMM_MAX for c in trust._LOCKER_COMMS)
+    assert "swaylock-effects" not in trust._LOCKER_COMMS  # the 16-char form
+
+
+def test_session_locked_skips_non_pid_entries_even_named_like_a_locker(
+    monkeypatch, tmp_path
+):
+    # a non-numeric /proc entry whose comm reads as a locker (a stray file,
+    # or /proc/self) must be skipped: deleting the isdigit guard would turn
+    # such an entry into a false lock that refuses all input
+    d = tmp_path / "self"  # non-numeric, like the real /proc/self
+    d.mkdir()
+    (d / "comm").write_text("hyprlock\n")
+    monkeypatch.setattr(trust, "_PROC", str(tmp_path))
+    assert real_session_locked() is None
+
+
+# --- osk layer kind (the on-screen keyboard) ---------------------------------
+
+
+def test_osk_namespace_classifies_and_steals_focus():
+    # wvkbd/squeekboard must map to 'osk' and count as focus-stealing, or a
+    # mapped keyboard silently stops blocking clicks and aborting sequences
+    assert trust.hyprctl.layer_kind("wvkbd-mobintl") == "osk"
+    assert trust.hyprctl.layer_kind("squeekboard") == "osk"
+    assert "osk" in trust.hyprctl.FOCUS_STEALING_KINDS
+
+
+def test_osk_does_not_grab_the_keyboard():
+    # the on-screen keyboard SENDS keys, it does not eat them, so it must
+    # NOT be in the keyboard-grab set (widening it would refuse legit typing)
+    assert "osk" not in trust.hyprctl.KEYBOARD_GRABBING_KINDS
+
+
+def test_covering_layer_refuses_over_an_osk(monkeypatch):
+    raw = {"DP-1": {"levels": {"3": [
+        {"namespace": "wvkbd-mobintl", "x": 0, "y": 900, "w": 1920, "h": 180}]}}}
+    monkeypatch.setattr(trust.hyprctl, "query", lambda cmd: raw)
+    hit = trust.covering_layer(500, 1000)
+    assert hit is not None and hit["kind"] == "osk"
+
+
+def test_keyboard_layer_ignores_a_mapped_osk(monkeypatch):
+    # a windowless type with only an OSK up is fine and earns no note
+    raw = {"DP-1": {"levels": {"3": [
+        {"namespace": "wvkbd-mobintl", "x": 0, "y": 900, "w": 1920, "h": 180}]}}}
+    monkeypatch.setattr(trust.hyprctl, "query", lambda cmd: raw)
+    assert trust.guard_keyboard_layer(False, False) == ""
+
+
+# --- covering_layer ranking and edges ----------------------------------------
+
+
+def test_level_rank_places_unknown_below_every_named_level(monkeypatch):
+    # parse_layers emits str(level) for levels >= 4, which is not in
+    # LAYER_LEVELS; such a surface must not outrank a real overlay
+    raw = {
+        "DP-1": {
+            "levels": {
+                "3": [{"namespace": "rofi", "x": 0, "y": 0, "w": 100, "h": 100}],
+                "7": [{"namespace": "weird", "x": 0, "y": 0, "w": 100, "h": 100}],
+            }
+        }
+    }
+    monkeypatch.setattr(trust.hyprctl, "query", lambda cmd: raw)
+    # 'weird' is kind 'unknown' so it is not focus-stealing; rofi wins, and
+    # crucially the unknown level '7' must rank below 'overlay', not above
+    assert trust._level_rank("7") < trust._level_rank("overlay")
+    assert trust.covering_layer(50, 50)["namespace"] == "rofi"
+
+
+def test_covering_layer_edges_are_half_open(monkeypatch):
+    # a surface at x..x+w covers [x, x+w); a click exactly on the right or
+    # bottom edge belongs to the window beneath, not the layer
+    raw = {"DP-1": {"levels": {"3": [
+        {"namespace": "rofi", "x": 100, "y": 100, "w": 200, "h": 100}]}}}
+    monkeypatch.setattr(trust.hyprctl, "query", lambda cmd: raw)
+    assert trust.covering_layer(100, 100) is not None  # top-left corner: inside
+    assert trust.covering_layer(299, 199) is not None  # last inside pixel
+    assert trust.covering_layer(300, 150) is None  # right edge: outside
+    assert trust.covering_layer(150, 200) is None  # bottom edge: outside
+
+
+def test_guard_covering_layer_refusal_carries_the_dismiss_advice(monkeypatch):
+    monkeypatch.setattr(trust.hyprctl, "query", lambda cmd: LAYERS_RAW)
+    with pytest.raises(trust.TrustError) as exc:
+        trust.guard_covering_layer(600, 350)
+    # the remedy must be IN the rendered refusal, not just a pure function
+    assert trust._dismiss_advice("launcher") in str(exc.value)
+
+
+def test_windows_under_ignores_unmapped_clients(monkeypatch):
+    # an unmapped (hidden/minimized) window is not really under the cursor;
+    # counting it would make confinement refuse a click over empty space
+    monkeypatch.setenv("HYPRUSE_CONFINE", "class:kitty")
+    monkeypatch.setenv("HYPRUSE_AUTH_GUARD", "0")
+    windows = [
+        {"address": "0xhidden", "class": "firefox", "at": [0, 0], "size": [100, 100],
+         "workspace": {"id": 1}, "mapped": False},
+    ]
+    _batch(monkeypatch, MON, windows)
+    trust.guard_pointer(50, 50)  # the only covering window is unmapped: allowed

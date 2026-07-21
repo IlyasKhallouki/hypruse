@@ -598,9 +598,13 @@ def keyboard(
     addr_str = _addr(window) if window else ""  # validate the address format first
     # a locked session eats all input, and a mapped launcher layer holds
     # the keyboard grab regardless of window focus: refuse when that
-    # breaks the caller's stated intent, else report it (see the guards)
+    # breaks the caller's stated intent, else report it (see the guards).
+    # A lock DOMINATES: any layer state is behind it, so on the allow_auth
+    # path the lock note stands alone rather than being contradicted by a
+    # keyboard-grab note about a launcher the human cannot even see.
     note = trust.guard_session_lock(allow_auth)
-    note += trust.guard_keyboard_layer(bool(window), allow_auth)
+    if not note:
+        note = trust.guard_keyboard_layer(bool(window), allow_auth)
     # resolve the window keystrokes will land in, for the confinement and
     # auth guards, but only when a guard is active (it costs a query). When
     # no window= is given we best-effort the focused one; a bare key (esc,
@@ -690,8 +694,10 @@ def click_ui(
     trust.guard_client(client)  # confinement
     trust.guard_auth_client(client, allow_auth)
     # a locked session, or a layer over the point, would swallow the click
-    # while the result claimed success; refuse before any side effect
-    trust.guard_session_lock(allow_auth)
+    # while the result claimed success; refuse before any side effect. On
+    # the allow_auth path a lock does not refuse but returns a note, which
+    # must reach the result or click_ui would report a control it never hit.
+    note = trust.guard_session_lock(allow_auth)
     trust.guard_covering_layer(x, y)
     hyprctl.dispatch("focuswindow", f"address:{client['address']}")
     time.sleep(0.05)  # focus (and a possible workspace switch) settles first
@@ -700,7 +706,7 @@ def click_ui(
     # observe the CLICKED window, not whatever holds focus after the click
     # (the click itself may have spawned a dialog that stole it)
     return _acted(
-        f"clicked {desc} at ({x}, {y}) in {client.get('class', '')}",
+        f"clicked {desc} at ({x}, {y}) in {client.get('class', '')}{note}",
         then,
         window=client["address"],
     )
@@ -1218,8 +1224,8 @@ def sequence(
     (default) the run stops, best-effort, when it notices a STRUCTURAL
     change between steps that the step did not intend: a window opening
     (e.g. a dialog), closing, or moving, a switch to an unexpected
-    workspace, or a keyboard-grabbing layer surface (a launcher or lock
-    screen) appearing, so later steps do not act on stale state.
+    workspace, or a seat-taking layer surface (a launcher or on-screen
+    keyboard) appearing, so later steps do not act on stale state.
     Notification popups and bars are not treated as changes. It does NOT catch
     a bare focus change, so to type into a specific window reliably give
     that keyboard step a window= address (it focuses first). Bounded to 20

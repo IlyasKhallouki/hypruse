@@ -97,3 +97,46 @@ def test_virtual_pointer_handshake_no_events():
         assert vp._pointer > 0
     # context manager closed the connection; a leaked device would show in
     # `hyprctl devices`, creation+destroy inside one connection is silent.
+
+
+@needs_hyprland
+def test_session_lock_detection_matches_reality():
+    """The whole session-lock guard rests on a protocol fact: modern
+    lockers are ext-session-lock clients, invisible to `hyprctl layers`,
+    so detection must go through the process, not the layer list. Verify
+    the live machine agrees, without ever locking the screen."""
+    import shutil as _shutil
+    import subprocess as _sub
+
+    from hypruse import trust
+
+    # unlocked session: the /proc scan runs against real /proc and finds
+    # no locker (this test would never run under an actual lock)
+    assert trust.session_locked() is None
+
+    # and the architectural premise: if a locker is installed, it links
+    # ext-session-lock and NOT layer-shell, which is why layers cannot see
+    # it. Skip when none is installed rather than assert a false negative.
+    hyprlock = _shutil.which("hyprlock")
+    if hyprlock:
+        syms = _sub.run(["strings", hyprlock], capture_output=True, text=True).stdout
+        assert "ext_session_lock_v1" in syms, "hyprlock is not an ext-session-lock client?"
+        assert "zwlr_layer_shell" not in syms, (
+            "hyprlock links layer-shell: session-lock detection assumptions changed"
+        )
+
+
+@needs_hyprland
+def test_live_layers_shape_matches_the_parser():
+    """parse_layers must handle what the live compositor actually emits:
+    a per-monitor dict of level -> surface list, with each surface
+    carrying namespace and x/y/w/h. Guards against fixture drift."""
+    from hypruse import hyprctl
+
+    raw = hyprctl.query("layers")
+    assert isinstance(raw, dict)
+    surfaces = hyprctl.parse_layers(raw)
+    for s in surfaces:
+        assert set(s) >= {"namespace", "kind", "level", "geometry"}
+        assert len(s["geometry"]) == 4
+        assert s["level"] in hyprctl.LAYER_LEVELS or s["level"].isdigit()

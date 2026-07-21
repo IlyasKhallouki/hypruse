@@ -73,6 +73,17 @@ All notable changes to this project are documented here. The format follows
   list order, and its "close it first" advice is written per kind: a
   lock screen does not yield to esc, and an on-screen keyboard is
   dismissed rather than escaped.
+- `click_ui` now surfaces the session-lock note on the `allow_auth` path
+  (it was discarded, so a click into a locked session reported a control
+  it never reached), and refuses under a lock like `pointer`/`keyboard`
+  do; both were untested at that call site.
+- Two `_LOCKER_COMMS` entries could never match a real process:
+  `swaylock-effects` is 16 characters and the kernel caps
+  `/proc/PID/comm` at 15 (now stored truncated), and `gtygra` was a
+  fabricated name with no basis in any packaging (removed). An
+  import-time assertion now rejects any over-length entry.
+- Under a lock, the keyboard-grab note no longer also fires and
+  contradicts the lock note about where the keys went.
 
 ### Changed
 - Read-only mode ships its own server instructions and observation-tool
