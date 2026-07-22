@@ -6,6 +6,8 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.9.3] - 2026-07-22
+
 ### Fixed
 - `HYPRUSE_STRICT` no longer locks up permanently after a human touches
   the seat. The guard's own error says "re-read desktop()/screenshot()
