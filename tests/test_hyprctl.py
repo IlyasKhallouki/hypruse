@@ -192,7 +192,7 @@ def test_parse_layers_flattens_and_classifies():
     assert by_ns["waybar"]["kind"] == "bar"
     assert by_ns["waybar"]["level"] == "bottom"
     assert by_ns["wofi"] == {
-        "namespace": "wofi", "kind": "launcher", "level": "overlay",
+        "namespace": "wofi", "kind": "launcher", "mapped": True, "level": "overlay",
         "monitor": "eDP-1", "geometry": [660, 300, 600, 400],
     }
     assert by_ns["notifications"]["kind"] == "notifications"

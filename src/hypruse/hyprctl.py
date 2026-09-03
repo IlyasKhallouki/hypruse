@@ -498,6 +498,7 @@ def parse_layers(raw: dict[str, Any]) -> list[dict[str, Any]]:
                     {
                         "namespace": ns,
                         "kind": layer_kind(ns),
+                        "mapped": True,
                         "level": LAYER_LEVELS[level] if level < 4 else str(level),
                         "monitor": monitor,
                         "geometry": [s.get("x"), s.get("y"), s.get("w"), s.get("h")],

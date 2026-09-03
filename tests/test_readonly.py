@@ -35,6 +35,7 @@ def test_readonly_exposes_only_observation_tools(reloaded):
     names = _tool_names(reloaded("1"))
     assert names == OBSERVE
     assert "READ-ONLY MODE" in reloaded("1").mcp.instructions
+    assert "Mapping does not prove" in reloaded("1").mcp.instructions
 
 
 def test_default_exposes_everything(reloaded):
