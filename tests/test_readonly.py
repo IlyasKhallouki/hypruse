@@ -35,13 +35,20 @@ def test_readonly_exposes_only_observation_tools(reloaded):
     names = _tool_names(reloaded("1"))
     assert names == OBSERVE
     assert "READ-ONLY MODE" in reloaded("1").mcp.instructions
-    assert "Mapping does not prove" in reloaded("1").mcp.instructions
 
 
 def test_default_exposes_everything(reloaded):
     names = _tool_names(reloaded(None))
     assert names == OBSERVE | ACT
     assert "READ-ONLY" not in reloaded(None).mcp.instructions
+
+
+def test_both_instruction_sets_separate_listed_layers_from_visible(reloaded):
+    # `hyprctl layers` reports surfaces the compositor tracks, mapped or
+    # not, so neither instruction set may let presence read as visibility
+    for value in ("1", None):
+        text = " ".join((reloaded(value).mcp.instructions or "").split())
+        assert "not one you can see" in text
 
 
 @pytest.mark.parametrize(

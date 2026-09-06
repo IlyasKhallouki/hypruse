@@ -485,7 +485,16 @@ def parse_layers(raw: dict[str, Any]) -> list[dict[str, Any]]:
     """Flatten `hyprctl layers -j` (monitor -> level -> surfaces) into a
     model view. The background level (wallpaper daemons) is dropped as
     noise; geometry is already global logical, the same space as window
-    `at`/`size`."""
+    `at`/`size`.
+
+    A surface listed here is one Hyprland TRACKS, which is weaker than
+    visible and weaker even than mapped: the compositor appends a layer
+    surface to the monitor's list when the client creates it and drops it
+    only when the client destroys it, so one that never mapped, or that
+    unmapped and stayed alive, is reported exactly like a live launcher.
+    The dump carries no visibility flag, so nothing downstream may read a
+    namespace's presence as 'that overlay is up'; only a frame answers
+    that."""
     out: list[dict[str, Any]] = []
     for monitor, entry in (raw or {}).items():
         for level_id, surfaces in (entry.get("levels") or {}).items():
@@ -498,7 +507,6 @@ def parse_layers(raw: dict[str, Any]) -> list[dict[str, Any]]:
                     {
                         "namespace": ns,
                         "kind": layer_kind(ns),
-                        "mapped": True,
                         "level": LAYER_LEVELS[level] if level < 4 else str(level),
                         "monitor": monitor,
                         "geometry": [s.get("x"), s.get("y"), s.get("w"), s.get("h")],

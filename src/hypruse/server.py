@@ -34,10 +34,10 @@ hypruse controls a live Hyprland desktop. Workflow: call `desktop` first
 and prefer `hypr`/`launch` (IPC, instant and exact) for anything window-
 or workspace-shaped; use `screenshot` + `pointer`/`keyboard` only to see
 and operate inside application windows. Launchers, bars, notification
-popups, and on-screen keyboards are not windows: `desktop` reports their
-mapped surfaces under `layers`. Mapping does not prove that a surface draws
-visible content; use `screenshot` when visibility matters. To CLICK a named
-control inside an app, call `click_ui` FIRST:
+popups, and on-screen keyboards are not windows: `desktop` reports them
+under `layers`. A listed layer is one the compositor tracks, not one you
+can see: it may be transparent or dormant, so `screenshot` when visibility
+matters. To CLICK a named control inside an app, call `click_ui` FIRST:
 for GTK/Qt apps it resolves the control in the accessibility tree and
 clicks it in ONE call, no image and no pixel estimation (`ui` lists the
 controls and their current values without clicking; `marks` returns a
@@ -91,15 +91,15 @@ drives, hypruse watches and reports.
 
 Workflow: call `desktop` first for the semantic state: monitors,
 workspaces, windows (address, class, title, `at` + `size` in global
-coords), the active window, cursor, and mapped `layers` (launchers, bars,
-notification popups, and on-screen keyboards are not windows and appear only
-there). Mapping does not prove visible content: a surface can be transparent
-or dormant, so confirm visibility with `screenshot` rather than inferring it
-from presence. To read what an app
-shows, prefer `ui` (its accessibility
-tree: control names with CURRENT values, a few hundred exact tokens
-and no image) when the app exposes one; `marks` adds a numbered
-screenshot plus legend when you want to SEE the controls. Use
+coords), the active window, cursor, and `layers` (launchers, bars,
+notification popups, and on-screen keyboards are not windows and
+appear only there). A listed layer is one the compositor tracks, not one
+you can see: it may be transparent or dormant, so confirm with a
+`screenshot` rather than inferring visibility from presence. To read what
+an app shows, prefer `ui` (its accessibility tree: control names with
+CURRENT values, a few hundred exact tokens and no image) when the app
+exposes one; `marks` adds a numbered screenshot plus legend when you want
+to SEE the controls. Use
 `screenshot` (focused monitor, a window, or a region) and `zoom` (a
 native-resolution crop around a point) when the tree exposes nothing
 (terminals, canvas UIs, Electron/Chrome without a flag). `binds`
@@ -152,12 +152,12 @@ def _prune_shots(d: Path, keep: int = 20) -> None:
 def desktop() -> dict[str, Any]:
     """Semantic desktop snapshot: monitors, workspaces, windows (address,
     class, title, `at` + `size` in global coords), active window, cursor,
-    and mapped `layers`: launchers (wofi/rofi),
-    bars, notification popups, and on-screen keyboards are NOT windows and
-    appear only there, with a best-effort `kind` and global geometry. Mapping
-    does not prove visible content: a surface can be transparent or dormant,
-    so use a screenshot when visibility matters. Call first; act on the
-    addresses it returns."""
+    and `layers`: launchers (wofi/rofi), bars, notification popups, and
+    on-screen keyboards are NOT windows and appear only there, with a
+    best-effort `kind` and global geometry you can screenshot by region or
+    click into. A listed layer is one the compositor tracks, not one you
+    can see: it may be transparent or dormant, so screenshot when
+    visibility matters. Call first; act on the addresses it returns."""
     snap = hyprctl.snapshot()
     # under HYPRUSE_STRICT a seat that moved without hypruse blocks every
     # acting tool until the agent re-observes; this read IS that
@@ -1515,12 +1515,12 @@ def sequence(
 _READONLY_DOCS = {
     "desktop": """Semantic desktop snapshot: monitors, workspaces, windows (address,
     class, title, `at` + `size` in global coords), active window, cursor,
-    and mapped `layers`: launchers (wofi/rofi),
-    bars, notification popups, and on-screen keyboards are NOT windows and
-    appear only there, with a best-effort `kind` and global geometry. Mapping
-    does not prove visible content: a surface can be transparent or dormant,
-    so use a screenshot when visibility matters. Call first; pass the addresses
-    it returns to the other observation tools.""",
+    and `layers`: launchers (wofi/rofi), bars, notification popups, and
+    on-screen keyboards are NOT windows and appear only there, with a
+    best-effort `kind` and global geometry you can screenshot by region. A
+    listed layer is one the compositor tracks, not one you can see: it may
+    be transparent or dormant, so screenshot when visibility matters. Call
+    first; pass the addresses it returns to the other observation tools.""",
     "screenshot": """Capture the focused monitor, a window (`window`: "active" or an
     address from desktop, cheapest for reading one app), or a `region`
     "x,y,WxH". Returns the image (or a file path to read) + JSON metadata

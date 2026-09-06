@@ -47,7 +47,7 @@ Design decisions:
 
 | tool | what it does |
 |---|---|
-| `desktop` | One-call semantic snapshot: monitors, workspaces, windows (address/class/title/geometry), active window, cursor, and mapped layer surfaces (launchers, bars, notification popups) with a best-effort kind and geometry. A mapped layer may be transparent or dormant; screenshot when visibility matters |
+| `desktop` | One-call semantic snapshot: monitors, workspaces, windows (address/class/title/geometry), active window, cursor, and layer surfaces (launchers, bars, notification popups) with a best-effort kind and geometry. A listed layer is one the compositor tracks, not one you can see: transparent and dormant surfaces are reported too, so screenshot when visibility matters |
 | `screenshot` | Focused monitor, exact window crop by address, or `x,y,WxH` region; returns image + coordinate-mapping metadata; fast JPEG by default (`lossless=true` for PNG); `stable=true` waits for the frame to settle |
 | `zoom` | Native-resolution re-capture around an estimated point (optionally clamped to a window): the precision step before clicking small controls, same metadata contract |
 | `ui` | Read a window's accessibility tree (AT-SPI, GTK/Qt apps that expose one) and return clickable elements by name with exact global coordinates, no screenshot; reports current values too (typed text, slider position, checkbox state); falls back to vision when an app exposes nothing |
@@ -71,7 +71,7 @@ The tools group into five capabilities, ordered most-reliable-and-cheapest first
 
 ### 1. Semantic desktop control (start here)
 
-`desktop` returns the entire window and workspace tree in one call: every window's address, class, title, and geometry, the active window, the cursor, and any layer surfaces on screen (launchers, bars, notification popups). `hypr` and `launch` then act on it over IPC in milliseconds: switch workspace, focus/move/close/fullscreen/float a window by address, or start an app.
+`desktop` returns the entire window and workspace tree in one call: every window's address, class, title, and geometry, the active window, the cursor, and any layer surfaces the compositor is tracking (launchers, bars, notification popups). `hypr` and `launch` then act on it over IPC in milliseconds: switch workspace, focus/move/close/fullscreen/float a window by address, or start an app.
 
 **Use it well:** never take a screenshot to find or arrange windows. Read `desktop`, act on the address you want. `launch` blocks on the real `openwindow` event and hands back the new window's address, so there is nothing to poll or guess; it also relocates single-instance apps (browsers) that ignore workspace rules.
 
