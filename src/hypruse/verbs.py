@@ -35,7 +35,7 @@ from hypruse import __version__
 
 OBSERVE = ("desktop", "screenshot", "zoom", "ui", "marks", "binds", "wait_for")
 ACT = ("pointer", "keyboard", "click_ui", "hypr", "launch", "use_bind", "sequence")
-OWNER = ("doctor", "init", "stop", "journal", "replay", "skill")
+OWNER = ("doctor", "init", "stop", "journal", "replay", "skill", "browser", "browser-host")
 ALIASES = {"click-ui": "click_ui", "use-bind": "use_bind", "wait-for": "wait_for"}
 THEN = ("none", "desktop", "ui", "screenshot")
 HYPR_ACTIONS = (
@@ -648,6 +648,16 @@ def _render_desktop(snap: dict[str, Any]) -> str:
 
 
 def main(argv: list[str]) -> int:
+    if argv and argv[0] in ("browser", "browser-host"):
+        # the bridge to the hypruse-browser extension; browser-host is what Chrome starts,
+        # and Chrome passes it an origin argument no parser here should see
+        if argv[0] == "browser-host":
+            from hypruse.browser import host
+
+            return host.main(argv[1:])
+        from hypruse.browser import install
+
+        return install.main(argv[1:])
     if argv and argv[0] in ("journal", "replay", "skill"):
         # these parse their own flags (argparse's REMAINDER would reject a
         # leading --flag before ever handing it over)

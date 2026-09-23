@@ -129,6 +129,13 @@ def _skill_note() -> tuple[bool, str]:
     return True, "agent skill not installed (hypruse skill install, for shell-driven agents)"
 
 
+def _browser_note() -> tuple[bool, str]:
+    """The bridge to the hypruse-browser extension. Optional, so it never fails the report."""
+    from hypruse.browser import install
+
+    return install.describe(install.status())
+
+
 CHECKS = (
     ("dependencies", _check_deps),
     ("session", _check_session),
@@ -137,6 +144,7 @@ CHECKS = (
     ("screenshot", _check_screenshot),
     ("mode", _mode_note),
     ("skill", _skill_note),
+    ("browser", _browser_note),
 )
 
 
@@ -767,6 +775,9 @@ For the owner:
   replay         re-issue a journal's actions through the same guards;
                  prints the plan and stops unless --execute is given
   skill          path | install [--agent NAME] [--copy] | uninstall
+  browser        install [--browser chrome|chromium|brave] | uninstall | status:
+                 the native host for the hypruse-browser extension
+  browser-host   the relay itself; Chrome starts it, you never need to
   serve          the MCP stdio server, explicitly
   --version
 """
