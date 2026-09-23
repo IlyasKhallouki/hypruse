@@ -112,7 +112,12 @@ class BrowserClient:
     def call(
         self, op: str, args: dict[str, Any] | None = None, *, timeout: float | None = None
     ) -> dict[str, Any]:
-        with self._lock:
+        # the deadline covers the wait for another thread's call too: a caller that can
+        # afford 0.6 s must not sit behind a 3 s snapshot of a page that is still loading
+        deadline = time.monotonic() + (self.timeout if timeout is None else timeout)
+        if not self._lock.acquire(timeout=max(deadline - time.monotonic(), 0.0)):
+            raise BrowserError("timeout", "the browser was busy with another call")
+        try:
             self.connect()
             assert self._sock is not None
             ident = f"{os.getpid()}-{next(self._ids)}"
@@ -122,7 +127,6 @@ class BrowserClient:
             except OSError as exc:
                 self.close()
                 raise BrowserError("no_extension", "the browser host went away") from exc
-            deadline = time.monotonic() + (self.timeout if timeout is None else timeout)
             try:
                 while True:
                     message = self._read(deadline)
@@ -134,6 +138,8 @@ class BrowserClient:
             except BrowserError:
                 self.close()
                 raise
+        finally:
+            self._lock.release()
         if message.get("ok"):
             result = message.get("result")
             return result if isinstance(result, dict) else {}

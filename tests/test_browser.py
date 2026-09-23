@@ -7,6 +7,7 @@ write them to.
 
 from __future__ import annotations
 
+import contextlib
 import io
 import json
 import os
@@ -286,6 +287,26 @@ def test_a_call_nobody_answers_times_out(relay):
     with BrowserClient(path, timeout=0.3) as browser, pytest.raises(BrowserError) as caught:
         browser.call("tabs.list")
     assert caught.value.code == "timeout"
+
+
+def test_a_call_waiting_behind_another_keeps_its_own_deadline(relay):
+    ext, path, _ = relay
+    ext.answer = False
+    with BrowserClient(path, timeout=5) as browser:
+        slow = threading.Thread(target=lambda: _swallow(browser.call, "page.snapshot"), daemon=True)
+        slow.start()
+        time.sleep(0.1)  # the slow call holds the connection now
+        started = time.monotonic()
+        with pytest.raises(BrowserError) as caught:
+            browser.call("tabs.list", timeout=0.3)
+        assert caught.value.code == "timeout"
+        assert time.monotonic() - started < 1.0
+        browser.close()
+
+
+def _swallow(fn, *args):
+    with contextlib.suppress(BrowserError):
+        fn(*args)
 
 
 def test_no_socket_means_no_browser(tmp_path):
