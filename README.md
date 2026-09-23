@@ -131,6 +131,26 @@ npx skills add IlyasKhallouki/hypruse -g
 
 `hypruse init` offers the same install. The skill pre-approves only the observation verbs, `doctor`, `--help` and reading the capture files; acting verbs stay behind your agent's own approval prompt, which is the boundary the [Security model](#security-model) leans on.
 
+## The browser
+
+Chrome publishes nothing to the accessibility bus unless it is started with a flag, so `ui` and `click_ui` see an empty window there. The [hypruse-browser](https://github.com/IlyasKhallouki/hypruse-browser) extension fills that gap. Chrome starts `hypruse browser-host` when the extension connects, and the host relays between the extension and a socket in `$XDG_RUNTIME_DIR/hypruse/` that only you can reach. Any local program can then list and switch tabs, read the clickable and typeable things on a page, click them, type into fields, and scroll:
+
+```sh
+hypruse browser install      # register the host with Chrome, Chromium and Brave
+hypruse browser status       # connected: hypruse-browser 0.1.0 in Chrome/151 (chrome)
+```
+
+```python
+from hypruse.browser import BrowserClient
+
+with BrowserClient() as browser:
+    page = browser.snapshot()
+    second = next(e for e in page["elements"] if (e.get("list") or {}).get("index") == 2)
+    browser.click(page["snapshot_id"], second["id"])
+```
+
+A click names a snapshot, so a page that changed in between answers with an error rather than a click on whatever moved into that spot. The extension never reads what is in a field and refuses to type into password or card fields. [hyprsay](https://github.com/IlyasKhallouki/hyprsay) uses this to drive the browser by voice. An MCP `browser` tool on top of the same client is next.
+
 ## Install
 
 Requirements: Hyprland (both config managers: `hyprland.conf` and the Lua `hyprland.lua` that 0.56 introduced), `grim`, `wtype` (most Hyprland setups already have both), and [uv](https://docs.astral.sh/uv/). The accessibility tools (`ui`/`marks`/`click_ui`) use `busctl`, which ships with systemd. Optional: `wl-clipboard` for the opt-in clipboard tool, `imagemagick` for numbered `marks` captures.
