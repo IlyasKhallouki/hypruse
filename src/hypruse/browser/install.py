@@ -16,7 +16,7 @@ import sys
 from dataclasses import dataclass
 from pathlib import Path
 
-from hypruse.browser.client import BrowserClient, BrowserUnavailable, socket_path
+from hypruse.browser.client import BrowserClient, BrowserUnavailable, socket_paths
 
 HOST_NAME = "dev.hypruse.browser"
 EXTENSION_ID = "pcfjlemgcbbpppclachnobhnnnahpgoj"
@@ -45,6 +45,7 @@ class Status:
     launcher: Path | None
     extension: str = ""
     browser: str = ""
+    connected: int = 0  # how many profiles have the extension connected
 
 
 def _manifest_path(home: Path, browser: str) -> Path:
@@ -114,13 +115,16 @@ def status(*, home: Path | None = None, socket: Path | None = None) -> Status:
     installed = tuple(b for b in BROWSERS if _manifest_path(home, b).exists())
     launcher = home / LAUNCHER
     extension = browser = ""
-    try:
-        with BrowserClient(socket or socket_path(), timeout=1.0) as client:
-            extension = str(client.hello.get("extension", ""))
-            browser = str(client.hello.get("browser", ""))
-    except BrowserUnavailable:
-        pass
-    return Status(installed, launcher if launcher.exists() else None, extension, browser)
+    connected = 0
+    for path in socket_paths(socket):
+        try:
+            with BrowserClient(path, timeout=1.0) as client:
+                extension = extension or str(client.hello.get("extension", ""))
+                browser = browser or str(client.hello.get("browser", ""))
+                connected += 1
+        except BrowserUnavailable:
+            continue
+    return Status(installed, launcher if launcher.exists() else None, extension, browser, connected)
 
 
 def describe(found: Status) -> tuple[bool, str]:
@@ -129,7 +133,10 @@ def describe(found: Status) -> tuple[bool, str]:
         return True, "not installed (optional): hypruse browser install"
     where = ", ".join(found.installed)
     if found.extension:
-        return True, f"connected: hypruse-browser {found.extension} in {found.browser} ({where})"
+        profiles = f", {found.connected} profiles" if found.connected > 1 else ""
+        return True, (
+            f"connected: hypruse-browser {found.extension} in {found.browser} ({where}{profiles})"
+        )
     return True, f"installed for {where}; no extension connected (is the browser running?)"
 
 

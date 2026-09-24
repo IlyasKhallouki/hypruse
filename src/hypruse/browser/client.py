@@ -18,10 +18,29 @@ import time
 from pathlib import Path
 from typing import Any
 
+# how many Chrome profiles can each have the extension connected at once
+MAX_BROWSERS = 8
+
 
 def socket_path() -> Path:
     runtime = os.environ.get("XDG_RUNTIME_DIR") or f"/run/user/{os.getuid()}"
     return Path(runtime) / "hypruse" / "browser.sock"
+
+
+def slot_paths(first: Path | None = None) -> list[Path]:
+    """Every socket a browser may hold: browser.sock, then browser-2.sock and on.
+
+    One per Chrome profile with the extension in it, because each profile starts its own
+    host and sees only its own windows."""
+    first = Path(first) if first is not None else socket_path()
+    rest = [first.with_name(f"{first.stem}-{n}{first.suffix}") for n in range(2, MAX_BROWSERS + 1)]
+    return [first, *rest]
+
+
+def socket_paths(first: Path | None = None) -> list[Path]:
+    """The sockets that exist now, in slot order. A file left by a host that died is
+    included; connecting to it fails with BrowserUnavailable like an absent one."""
+    return [path for path in slot_paths(first) if path.exists()]
 
 
 class BrowserUnavailable(Exception):

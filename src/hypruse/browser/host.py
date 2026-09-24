@@ -15,8 +15,10 @@ Diagnostics go to stderr, and never include what a request asked for, since a re
 carry text the owner typed.
 
 The socket is bound only after the extension has said hello, so a client that connects
-always learns which extension and browser it is talking to. One browser at a time: a second
-host that finds a live socket leaves it alone and exits.
+always learns which extension and browser it is talking to. Each Chrome profile with the
+extension starts a host of its own, and sees only its own windows, so a host that finds the
+first socket taken takes the next free one (`client.slot_paths`) rather than stepping aside:
+the owner works in more than one profile.
 """
 
 from __future__ import annotations
@@ -32,7 +34,7 @@ from pathlib import Path
 from typing import Any, BinaryIO
 
 from hypruse.browser import framing
-from hypruse.browser.client import socket_path
+from hypruse.browser.client import slot_paths
 
 PROTOCOL = 1
 SERVED = 0
@@ -249,11 +251,15 @@ def _bind(path: Path) -> socket.socket:
 
 
 def serve(stdin: BinaryIO, stdout: BinaryIO, path: Path | None = None) -> int:
-    """Relay until Chrome closes the pipe. Returns SERVED, ALREADY_SERVED or NO_EXTENSION."""
-    path = Path(path) if path is not None else socket_path()
-    if path.exists() and _live(path):
-        _log(f"another browser already holds {path}; leaving it alone")
+    """Relay until Chrome closes the pipe. Returns SERVED, ALREADY_SERVED or NO_EXTENSION.
+
+    `path` is the first slot; this host takes the first one no live host holds.
+    """
+    free = [slot for slot in slot_paths(path) if not (slot.exists() and _live(slot))]
+    if not free:
+        _log("every browser slot is taken; leaving them alone")
         return ALREADY_SERVED
+    path = free[0]
     relay = _Relay(stdin, stdout)
     reader = threading.Thread(target=relay.read_browser, name="browser-pipe", daemon=True)
     reader.start()

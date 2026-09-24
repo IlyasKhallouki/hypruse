@@ -9,6 +9,12 @@ The extension lives in its own repository, github.com/IlyasKhallouki/hypruse-bro
 docs/PROTOCOL.md there is the message format this package speaks.
 """
 
-from hypruse.browser.client import BrowserClient, BrowserError, BrowserUnavailable, socket_path
+from hypruse.browser.client import (
+    BrowserClient,
+    BrowserError,
+    BrowserUnavailable,
+    socket_path,
+    socket_paths,
+)
 
-__all__ = ["BrowserClient", "BrowserError", "BrowserUnavailable", "socket_path"]
+__all__ = ["BrowserClient", "BrowserError", "BrowserUnavailable", "socket_path", "socket_paths"]

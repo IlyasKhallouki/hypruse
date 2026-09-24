@@ -214,16 +214,39 @@ def test_the_host_leaves_when_the_browser_closes_the_pipe(relay):
     assert not path.exists()
 
 
-def test_a_second_host_does_not_take_a_live_socket(relay, tmp_path):
+def test_a_second_profiles_host_takes_the_next_socket_and_leaves_the_first(relay, tmp_path):
+    """Each Chrome profile with the extension starts its own host and sees only its own
+    windows, so a second one serves beside the first instead of stepping aside."""
     _ext, path, _ = relay
     other = Extension()
-    started = time.monotonic()
-    assert host.serve(other.host_stdin, other.host_stdout, path) == host.ALREADY_SERVED
-    assert time.monotonic() - started < 5
-    # and the first one is still there
-    s, reader = _line_client(path)
-    assert _recv(reader)["hello"]["connected"] is True
-    s.close()
+    done = threading.Event()
+    threading.Thread(
+        target=lambda: (host.serve(other.host_stdin, other.host_stdout, path), done.set()),
+        daemon=True,
+    ).start()
+    other.hello()
+    second = path.with_name("browser-2.sock")
+    deadline = time.monotonic() + 5
+    while not second.exists() and time.monotonic() < deadline:
+        time.sleep(0.02)
+    assert client_mod.socket_paths(path) == [path, second]
+    for held in (path, second):
+        s, reader = _line_client(held)
+        assert _recv(reader)["hello"]["connected"] is True
+        s.close()
+    other.close()
+    assert done.wait(5)
+    assert client_mod.socket_paths(path) == [path]
+
+
+def test_every_slot_taken_means_the_host_steps_aside(tmp_path, monkeypatch):
+    monkeypatch.setattr(host, "_live", lambda path: True)
+    first = tmp_path / "hypruse" / "browser.sock"
+    first.parent.mkdir(parents=True)
+    for slot in client_mod.slot_paths(first):
+        slot.touch()
+    other = Extension()
+    assert host.serve(other.host_stdin, other.host_stdout, first) == host.ALREADY_SERVED
 
 
 def test_a_stale_socket_file_is_replaced(tmp_path):
