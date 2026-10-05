@@ -258,6 +258,60 @@ def test_app_for_pid_title_fallback(monkeypatch):
     assert a11y.app_for_pid(bus, 999, title="Other") is None
 
 
+def test_app_for_pid_skips_childless_same_pid_root(monkeypatch):
+    # Qt under QT_QPA_PLATFORMTHEME=gtk3 registers TWO roots under one PID:
+    # the GTK bridge (name "qml6", NO children) first, the Qt root ("Qml
+    # Runtime") with the real window tree second; a portal root (different
+    # PID) sits in the same registry. Taking the first same-PID root made ui
+    # report "no actionable elements" for a window full of named buttons.
+    gtk, qt, portal = ("gtk", "/root"), ("qt", "/root"), ("portal", "/root")
+    frame, btn = ("qt", "/frame"), ("qt", "/btn")
+    nodes = {
+        gtk: {"role": 75, "name": "qml6", "children": []},
+        qt: {"role": 75, "name": "Qml Runtime", "children": [frame]},
+        portal: {"role": 75, "name": "xdg-desktop-portal-gtk", "children": []},
+        frame: {"role": 23, "name": "QML Window", "children": [btn]},
+        btn: {"role": 43, "role_name": "button", "name": "Approve Alpha",
+              "extent": (10, 10, 80, 30), "states": ALL_STATES, "children": []},
+    }
+    bus = FakeBus(nodes, pids={"gtk": 42, "qt": 42, "portal": 7})
+    monkeypatch.setattr(a11y, "apps", lambda b: [portal, gtk, qt])
+    # without a title the nonempty root wins; with one, the frame name matches
+    assert a11y.app_for_pid(bus, 42) == qt
+    assert a11y.app_for_pid(bus, 42, title="QML Window") == qt
+    els, _ = a11y.find_elements(bus, *a11y.app_for_pid(bus, 42))
+    assert [e["name"] for e in els] == ["Approve Alpha"]  # the symptom, gone
+
+
+def test_app_for_pid_same_pid_title_beats_registration_order(monkeypatch):
+    # two same-PID roots that BOTH have children: the one actually carrying
+    # the window (a frame named like the title) must win, not the first
+    # registered
+    a, b = ("a", "/root"), ("b", "/root")
+    nodes = {
+        a: {"role": 75, "name": "bridge", "children": [("a", "/f")]},
+        ("a", "/f"): {"role": 23, "name": "other window", "children": []},
+        b: {"role": 75, "name": "native", "children": [("b", "/f")]},
+        ("b", "/f"): {"role": 23, "name": "My Window", "children": []},
+    }
+    bus = FakeBus(nodes, pids={"a": 42, "b": 42})
+    monkeypatch.setattr(a11y, "apps", lambda b_: [a, b])
+    assert a11y.app_for_pid(bus, 42, title="My Window") == b
+
+
+def test_app_for_pid_all_same_pid_roots_childless_keeps_first(monkeypatch):
+    # no candidate is distinguishable: keep the first exact-PID root rather
+    # than reaching for the title fallback across other processes' roots
+    a, b = ("a", "/root"), ("b", "/root")
+    nodes = {
+        a: {"role": 75, "name": "one", "children": []},
+        b: {"role": 75, "name": "two", "children": []},
+    }
+    bus = FakeBus(nodes, pids={"a": 7, "b": 7})
+    monkeypatch.setattr(a11y, "apps", lambda _: [a, b])
+    assert a11y.app_for_pid(bus, 7) == a
+
+
 def test_do_action():
     bus, root = _tree()
     assert a11y.do_action(bus, "app", "/save") is True
