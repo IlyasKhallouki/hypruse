@@ -58,3 +58,97 @@ def test_find_window_active_and_missing():
         screenshot._find_window("0xdead", clients, "0xa")
     with pytest.raises(screenshot.ScreenshotError, match="no active window"):
         screenshot._find_window("active", clients, None)
+
+
+# A window on a workspace no monitor shows (#4): its `at` is a rect on the
+# monitor, but the monitor is showing something else there, so cropping
+# that rect returns another window's pixels under this window's name.
+ONE_MONITOR = [{"name": "eDP-1", "x": 0, "y": 0, "width": 1920, "height": 1080,
+                "scale": 1.0, "activeWorkspace": {"id": 1}, "specialWorkspace": {"id": 0}}]
+HIDDEN = {"address": "0xb", "class": "foot", "at": [10, 20], "size": [800, 600],
+          "workspace": {"id": 2}, "stableId": "1800002a"}
+SHOWN = {**HIDDEN, "address": "0xa", "workspace": {"id": 1}, "stableId": "18000010"}
+
+
+def _png(w, h):
+    return b"\x89PNG\r\n\x1a\n\x00\x00\x00\x0dIHDR" + w.to_bytes(4, "big") + h.to_bytes(4, "big")
+
+
+def _desktop(monkeypatch, toplevel=lambda args: _png(800, 600)):
+    """hyprctl sees ONE_MONITOR and both windows; grim answers -T with
+    `toplevel` and -g with a region-sized image, recording every call."""
+    replies = {"monitors": ONE_MONITOR, "clients": [SHOWN, HIDDEN], "activewindow": SHOWN}
+    monkeypatch.setattr(screenshot.hyprctl, "query", lambda what: replies[what])
+    calls = []
+
+    def fake_grim(args):
+        calls.append(args)
+        if "-T" in args:
+            return toplevel(args)
+        return _png(800, 600)
+
+    monkeypatch.setattr(screenshot, "_grim", fake_grim)
+    return calls
+
+
+def _no_toplevel_capture(args):
+    raise screenshot.ScreenshotError("grim failed: cannot find toplevel")
+
+
+def test_hidden_window_is_captured_as_a_toplevel_not_a_screen_crop(monkeypatch):
+    calls = _desktop(monkeypatch)
+    _, meta = screenshot.capture(window="0xb")
+    assert all("-g" not in a for a in calls)
+    assert calls[0][-2:] == ["-T", "1800002a"]
+    assert meta["geometry"] == [10, 20, 800, 600] and meta["scale"] == 1.0
+    assert meta["visible"] is False
+    assert "focus" in meta["coords"]  # a pointer click there lands on another window
+
+
+def test_shown_window_is_marked_visible(monkeypatch):
+    _desktop(monkeypatch)
+    _, meta = screenshot.capture(window="0xa")
+    assert meta["visible"] is True
+
+
+def test_hidden_window_is_refused_when_grim_cannot_capture_toplevels(monkeypatch):
+    calls = _desktop(monkeypatch, toplevel=_no_toplevel_capture)
+    with pytest.raises(screenshot.ScreenshotError, match="workspace 2"):
+        screenshot.capture(window="0xb")
+    assert all("-g" not in a for a in calls)
+
+
+def test_hidden_window_without_a_stable_id_is_refused(monkeypatch):
+    # Hyprland before stableId: no toplevel handle to ask grim for
+    calls = _desktop(monkeypatch)
+    old = {k: v for k, v in HIDDEN.items() if k != "stableId"}
+    monkeypatch.setattr(screenshot.hyprctl, "query",
+                        lambda w: {"monitors": ONE_MONITOR, "clients": [old],
+                                   "activewindow": SHOWN}[w])
+    with pytest.raises(screenshot.ScreenshotError, match="not shown"):
+        screenshot.capture(window="0xb")
+    assert calls == []
+
+
+def test_shown_window_falls_back_to_a_screen_crop(monkeypatch):
+    calls = _desktop(monkeypatch, toplevel=_no_toplevel_capture)
+    _, meta = screenshot.capture(window="0xa")
+    assert "-g" in calls[-1] and "10,20 800x600" in calls[-1]
+    assert meta["visible"] is True
+
+
+def test_toplevel_image_that_does_not_fit_the_geometry_falls_back(monkeypatch):
+    # a client-side shadow around the surface would shift every mapped
+    # point, so an image that is not the window's size is not used
+    calls = _desktop(monkeypatch, toplevel=lambda args: _png(860, 660))
+    _, meta = screenshot.capture(window="0xa")
+    assert "-g" in calls[-1]
+    assert meta["image"] == [800, 600]
+
+
+def test_zoom_refuses_a_hidden_window(monkeypatch):
+    # zoom crops the screen, which is not showing this window
+    _desktop(monkeypatch)
+    with pytest.raises(screenshot.ScreenshotError, match="workspace 2"):
+        screenshot.zoom_region(100, 100, window="0xb")
+    assert screenshot.zoom_region(100, 100, window="0xa")[2:] == (480, 360)

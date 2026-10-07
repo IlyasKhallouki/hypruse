@@ -392,6 +392,20 @@ def contains(rect: tuple[int, int, int, int], x: float, y: float) -> bool:
     return rx <= x < rx + rw and ry <= y < ry + rh
 
 
+def visible_workspaces(monitors: list[dict[str, Any]]) -> set[Any]:
+    """Workspace ids currently shown on any monitor, INCLUDING a pulled-up
+    special/scratchpad workspace (reported separately from activeWorkspace
+    and drawn on top): a scratchpad password manager must not slip the
+    coverage check."""
+    visible: set[Any] = set()
+    for m in monitors:
+        visible.add((m.get("activeWorkspace") or {}).get("id"))
+        special = (m.get("specialWorkspace") or {}).get("id")
+        if special:  # 0 = no special workspace up
+            visible.add(special)
+    return visible
+
+
 def monitor_at(monitors: list[dict[str, Any]], x: float, y: float) -> dict[str, Any] | None:
     """The monitor whose logical rect contains (x, y), or None if the
     point is off every monitor."""

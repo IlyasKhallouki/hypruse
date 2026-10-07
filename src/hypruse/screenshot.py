@@ -69,11 +69,15 @@ def zoom_region(x: float, y: float, size: str = "", window: str = "") -> tuple[i
     """The capture box for zooming at a point of interest: `size` (default
     DEFAULT_ZOOM_SIZE) centered on (x, y) in global logical pixels, clamped
     inside the window (when given) or the monitor containing the point,
-    falling back to the focused monitor for an off-layout estimate."""
+    falling back to the focused monitor for an off-layout estimate. A
+    window no monitor shows is refused: the box is cropped from the screen,
+    which is showing something else there."""
     w, h = parse_size(size or DEFAULT_ZOOM_SIZE)
     if window:
         active = (hyprctl.query("activewindow") or {}).get("address")
         c = _find_window(window, hyprctl.query("clients"), active)
+        if not _shown(c, hyprctl.query("monitors")):
+            raise _not_shown(c, "zoom crops the screen")
         (bx, by), (bw, bh) = c["at"], c["size"]
     else:
         monitors = hyprctl.query("monitors")
@@ -222,6 +226,51 @@ def _find_window(window: str, clients: list[dict[str, Any]], active: str | None)
     )
 
 
+def _shown(c: dict[str, Any], monitors: list[dict[str, Any]]) -> bool:
+    return (c.get("workspace") or {}).get("id") in hyprctl.visible_workspaces(monitors)
+
+
+def _not_shown(c: dict[str, Any], why: str) -> ScreenshotError:
+    ws = c.get("workspace") or {}
+    return ScreenshotError(
+        f"window {c['address']} is not shown: no monitor is showing its workspace "
+        f"{ws.get('name') or ws.get('id')}, and {why}. Focus it first with "
+        f"hypr(action='focus_window', target='{c['address']}')"
+    )
+
+
+def _grab_toplevel(
+    c: dict[str, Any],
+    start_scale: float,
+    max_bytes: int | None,
+    lossless: bool,
+    base_scale: float,
+) -> tuple[bytes, str, float] | None:
+    """The window's own surface via `grim -T`, so a window on a hidden
+    workspace or under another window still returns its own pixels.
+    Hyprland's stableId is the window's ext-foreign-toplevel-list
+    identifier, which is what -T takes. None when that path is unavailable
+    (no stableId on older Hyprland, grim before 1.5, no toplevel capture in
+    the compositor) or when the image is not the window's size: a
+    client-side shadow around the surface would offset every mapped point,
+    where the screen crop maps exactly."""
+    toplevel = c.get("stableId")
+    if not toplevel:
+        return None
+    try:
+        data, fmt, applied = _grab_fitting(
+            ["-T", str(toplevel)], start_scale, max_bytes, lossless, base_scale
+        )
+        iw, ih = image_size(data)
+    except ScreenshotError:
+        return None
+    w, h = c["size"]
+    factor = base_scale * applied
+    if abs(iw - w * factor) > 2 or abs(ih - h * factor) > 2:
+        return None
+    return data, fmt, applied
+
+
 def capture(
     window: str = "",
     region: str = "",
@@ -261,6 +310,7 @@ def capture(
             "window": c["address"],
             "class": c.get("class", ""),
             "geometry": [x, y, w, h],
+            "visible": _shown(c, monitors),
         }
         base_scale = _scale_for_rect(x, y, w, h, monitors)
         physical_long = max(w, h) * base_scale
@@ -279,12 +329,26 @@ def capture(
 
     # explicit scale wins; otherwise fit the long edge to keep the mapping honest
     start_scale = scale or _cap_scale(physical_long, max_edge)
-    data, fmt, applied = _grab_fitting(base, start_scale, max_bytes, lossless, base_scale)
+    grabbed = None
+    if window:
+        # cropping the window's rect returns whatever the screen shows there,
+        # another workspace's windows when its own is hidden (#4)
+        grabbed = _grab_toplevel(c, start_scale, max_bytes, lossless, base_scale)
+        if grabbed is None and not meta["visible"]:
+            raise _not_shown(c, "grim cannot capture it off screen here")
+    data, fmt, applied = grabbed or _grab_fitting(
+        base, start_scale, max_bytes, lossless, base_scale
+    )
     iw, ih = image_size(data)
     meta["image"] = [iw, ih]
     meta["format"] = fmt
     meta["scale"] = round(base_scale * applied, 6)
     meta["coords"] = "click a target at global = geometry[:2] + image_pixel / scale"
+    if meta.get("visible") is False:
+        meta["coords"] += (
+            ", after focusing the window (hypr action='focus_window'): it is not on "
+            "screen, so a click there now lands on another window"
+        )
     return data, meta
 
 

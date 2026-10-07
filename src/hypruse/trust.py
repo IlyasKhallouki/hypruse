@@ -206,25 +206,11 @@ def guard_use_bind() -> None:
         )
 
 
-def _visible_workspaces(monitors: list[dict[str, Any]]) -> set[Any]:
-    """Workspace ids currently shown on any monitor, INCLUDING a pulled-up
-    special/scratchpad workspace (reported separately from activeWorkspace
-    and drawn on top): a scratchpad password manager must not slip the
-    coverage check."""
-    visible: set[Any] = set()
-    for m in monitors:
-        visible.add((m.get("activeWorkspace") or {}).get("id"))
-        special = (m.get("specialWorkspace") or {}).get("id")
-        if special:  # 0 = no special workspace up
-            visible.add(special)
-    return visible
-
-
 def _windows_under(x: float, y: float) -> list[dict[str, Any]]:
     """Every mapped, on-screen window whose rect covers (x, y). One batched
     hyprctl call (monitors + clients) so a pointer guard costs one fork."""
     monitors, clients = hyprctl.batch_query(["monitors", "clients"])
-    visible = _visible_workspaces(monitors)
+    visible = hyprctl.visible_workspaces(monitors)
     return [
         c
         for c in clients

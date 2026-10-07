@@ -102,11 +102,14 @@ def test_zoom_region_rotated_monitor(monkeypatch):
 
 
 def test_zoom_region_window_bounds(monkeypatch):
-    clients = [{"address": "0xa", "at": [100, 50], "size": [800, 600]}]
+    clients = [{"address": "0xa", "at": [100, 50], "size": [800, 600], "workspace": {"id": 1}}]
+    shows_it = [{**MONITORS[0], "activeWorkspace": {"id": 1}}]
     monkeypatch.setattr(
         screenshot.hyprctl,
         "query",
-        _fake_query({"clients": clients, "activewindow": {"address": "0xa"}}),
+        _fake_query(
+            {"clients": clients, "activewindow": {"address": "0xa"}, "monitors": shows_it}
+        ),
     )
     assert screenshot.zoom_region(120, 60, window="0xa") == (100, 50, 480, 360)
     assert screenshot.zoom_region(120, 60, size="2000x2000", window="0xa") == (100, 50, 800, 600)

@@ -275,7 +275,9 @@ def screenshot(
     """Capture the focused monitor, a window (`window`: "active" or an
     address from desktop, cheapest for reading one app), or a `region`
     "x,y,WxH". Returns the image (or a file path to read) + JSON metadata
-    with geometry/scale for pixel→global mapping. `scale` 0.1-1.0:
+    with geometry/scale for pixel→global mapping. A window on a hidden
+    workspace or under another window is still captured as itself; its
+    metadata `visible` says whether it is on screen. `scale` 0.1-1.0:
     optional deliberate downscale, usually leave unset. `stable=true`
     waits (up to 2s) until two consecutive frames match, so a capture
     right after an action is not taken mid-animation; metadata gains
@@ -300,7 +302,7 @@ def zoom(
     x,y, zoom there, re-estimate on the zoomed image (scale ~1.0, so
     global = geometry[:2] + image_pixel), then click. `size` "WxH" in
     logical pixels (default 480x360) is clamped to the screen; `window`
-    (an address from desktop) clamps to that window instead. The metadata
+    (an address from desktop, on screen) clamps to that window instead. The metadata
     echoes the requested point back as `point`; `stable=true` waits for
     the frame to settle first; `lossless=true` returns PNG."""
     safety.touch("zoom")
@@ -1603,7 +1605,9 @@ _READONLY_DOCS = {
     "screenshot": """Capture the focused monitor, a window (`window`: "active" or an
     address from desktop, cheapest for reading one app), or a `region`
     "x,y,WxH". Returns the image (or a file path to read) + JSON metadata
-    with geometry/scale for pixel→global mapping. `scale` 0.1-1.0:
+    with geometry/scale for pixel→global mapping. A window on a hidden
+    workspace or under another window is still captured as itself; its
+    metadata `visible` says whether it is on screen. `scale` 0.1-1.0:
     optional deliberate downscale, usually leave unset. `stable=true`
     waits (up to 2s) until two consecutive frames match, so a capture
     right after a change is not taken mid-animation; metadata gains
@@ -1615,7 +1619,7 @@ _READONLY_DOCS = {
     x,y, zoom there, and read the fine detail on the zoomed image (scale
     ~1.0, so global = geometry[:2] + image_pixel). `size` "WxH" in
     logical pixels (default 480x360) is clamped to the screen; `window`
-    (an address from desktop) clamps to that window instead. The metadata
+    (an address from desktop, on screen) clamps to that window instead. The metadata
     echoes the requested point back as `point`; `stable=true` waits for
     the frame to settle first; `lossless=true` returns PNG.""",
     "ui": """Read a window's accessibility tree (AT-SPI) and return its elements
