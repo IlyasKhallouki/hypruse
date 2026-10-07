@@ -144,13 +144,27 @@ def apps(bus: Bus) -> list[tuple[str, str]]:
 
 def app_for_pid(bus: Bus, pid: int, title: str = "") -> tuple[str, str] | None:
     """The application accessible whose connection PID matches the window
-    (exact for single-process apps). Falls back to matching a frame's name
-    to the window title, which covers multi-process apps (e.g. Electron/Qt
-    whose a11y connection PID differs from the window PID)."""
+    (exact for single-process apps). A process can register several roots
+    under one PID (Qt with QT_QPA_PLATFORMTHEME=gtk3 bridges through GTK and
+    registers a second, toolkit-native root), and registration order says
+    nothing about which one carries the window: the GTK bridge root comes
+    first and exposes no children. So the first same-PID root WITH children
+    wins, and the scan stops there: each PID lookup is a busctl call, and
+    the usual one-root app should not pay one per registered root. When
+    every same-PID root is empty the first is kept. Falls back to matching
+    a frame's name to the window title across all roots, which covers
+    multi-process apps (e.g. Electron/Qt whose a11y connection PID differs
+    from the window PID)."""
     registered = apps(bus)
+    first = None
     for svc, path in registered:
-        if bus.conn_pid(svc) == pid:
+        if bus.conn_pid(svc) != pid:
+            continue
+        if _children(bus, svc, path):  # an empty root cannot hold the window
             return (svc, path)
+        first = first or (svc, path)
+    if first:
+        return first
     if title:
         for svc, path in registered:
             if _has_frame_named(bus, svc, path, title):
