@@ -1,6 +1,8 @@
 """Wait-for-stable capture: a post-action screenshot must not land
 mid-animation, and content that never settles must still return."""
 
+from itertools import count
+
 from hypruse import screenshot
 
 
@@ -35,8 +37,19 @@ def test_identical_from_the_start_is_two_captures(monkeypatch):
 
 
 def test_never_settles_times_out_with_last_frame(monkeypatch):
-    frames = [str(i).encode() for i in range(1000)]
-    _feed(monkeypatch, frames)
+    # A finite feed can exhaust before the timeout on a fast machine, then
+    # repeat its last frame and accidentally satisfy the stability condition.
+    frames = count()
+    last = {}
+
+    def changing_capture(*args, **kwargs):
+        frame = next(frames)
+        last["data"] = str(frame).encode()
+        last["frame"] = frame
+        return last["data"], {"format": "png", "frame": frame}
+
+    monkeypatch.setattr(screenshot, "capture", changing_capture)
     data, meta = screenshot.capture_stable(interval=0, timeout=0.05)
     assert meta["stable"] is False
-    assert data == frames[min(999, int(meta["frame"]))]
+    assert data == last["data"]
+    assert meta["frame"] == last["frame"]
