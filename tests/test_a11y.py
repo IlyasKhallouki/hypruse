@@ -283,20 +283,23 @@ def test_app_for_pid_skips_childless_same_pid_root(monkeypatch):
     assert [e["name"] for e in els] == ["Approve Alpha"]  # the symptom, gone
 
 
-def test_app_for_pid_same_pid_title_beats_registration_order(monkeypatch):
-    # two same-PID roots that BOTH have children: the one actually carrying
-    # the window (a frame named like the title) must win, not the first
-    # registered
-    a, b = ("a", "/root"), ("b", "/root")
+def test_app_for_pid_stops_at_the_first_root_that_holds_a_window(monkeypatch):
+    # every PID lookup is a busctl subprocess (~8 ms each on a live desktop),
+    # so the usual one-root app must not cost a lookup per registered root
+    a, b, c = ("a", "/root"), ("b", "/root"), ("c", "/root")
     nodes = {
-        a: {"role": 75, "name": "bridge", "children": [("a", "/f")]},
-        ("a", "/f"): {"role": 23, "name": "other window", "children": []},
-        b: {"role": 75, "name": "native", "children": [("b", "/f")]},
-        ("b", "/f"): {"role": 23, "name": "My Window", "children": []},
+        a: {"role": 75, "name": "one", "children": [("a", "/f")]},
+        ("a", "/f"): {"role": 23, "name": "Window", "children": []},
+        b: {"role": 75, "name": "two", "children": []},
+        c: {"role": 75, "name": "three", "children": []},
     }
-    bus = FakeBus(nodes, pids={"a": 42, "b": 42})
-    monkeypatch.setattr(a11y, "apps", lambda b_: [a, b])
-    assert a11y.app_for_pid(bus, 42, title="My Window") == b
+    bus = FakeBus(nodes, pids={"a": 42, "b": 7, "c": 8})
+    asked = []
+    pid_of = bus.conn_pid
+    bus.conn_pid = lambda svc: asked.append(svc) or pid_of(svc)
+    monkeypatch.setattr(a11y, "apps", lambda _: [a, b, c])
+    assert a11y.app_for_pid(bus, 42) == a
+    assert asked == ["a"]
 
 
 def test_app_for_pid_all_same_pid_roots_childless_keeps_first(monkeypatch):
