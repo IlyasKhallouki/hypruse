@@ -844,3 +844,68 @@ def test_init_marking_warns_instead_of_dying_when_the_rule_will_not_install(
     err = capsys.readouterr().err
     assert "HYPRUSE_MARK is set but the border rule did not install" in err
     assert "hypruse-owned" in err  # the config-file workaround still works
+
+
+# --- Omarchy 4's Quickshell surfaces, and polkit prompts drawn as layers ------
+
+
+@pytest.mark.parametrize(
+    "namespace, kind",
+    [
+        ("omarchy-polkit", "auth"),  # its polkit agent: a layer, not a window
+        ("polkit-agent", "auth"),
+        ("omarchy-lock-preview", "lock"),
+        ("omarchy-menu", "launcher"),
+        ("omarchy-clipboard", "launcher"),
+        ("omarchy-emojis", "launcher"),
+        ("omarchy-image-selector", "launcher"),
+        ("omarchy-keyboard-panel", "launcher"),  # bar popups grab the keyboard
+        ("omarchy-bar", "bar"),
+        ("omarchy-notifications", "notifications"),
+        ("omarchy-osd", "unknown"),
+    ],
+)
+def test_omarchy_layer_kinds(namespace, kind):
+    assert trust.hyprctl.layer_kind(namespace) == kind
+
+
+POLKIT_RAW = {
+    "DP-1": {
+        "levels": {"3": [{"namespace": "omarchy-polkit", "x": 0, "y": 0, "w": 1920, "h": 1080}]}
+    }
+}
+
+
+def test_keyboard_refuses_to_type_into_a_polkit_layer(monkeypatch):
+    monkeypatch.setattr(trust.hyprctl, "query", lambda cmd: POLKIT_RAW)
+    with pytest.raises(trust.TrustError, match="authentication"):
+        trust.guard_keyboard_layer(False, False)
+    note = trust.guard_keyboard_layer(False, True)  # a human intends it
+    assert "omarchy-polkit" in note
+    with pytest.raises(trust.TrustError, match="cannot reach the requested window"):
+        trust.guard_keyboard_layer(True, True)
+
+
+def test_polkit_layer_outranks_a_launcher_for_the_keyboard(monkeypatch):
+    raw = {"DP-1": {"levels": {"3": [
+        {"namespace": "omarchy-polkit", "x": 0, "y": 0, "w": 1920, "h": 1080},
+        {"namespace": "omarchy-menu", "x": 0, "y": 0, "w": 1920, "h": 1080},
+    ]}}}
+    monkeypatch.setattr(trust.hyprctl, "query", lambda cmd: raw)
+    with pytest.raises(trust.TrustError, match="authentication"):
+        trust.guard_keyboard_layer(False, False)
+
+
+def test_pointer_refuses_to_click_a_polkit_layer(monkeypatch):
+    monkeypatch.delenv("HYPRUSE_CONFINE", raising=False)
+    monkeypatch.setattr(trust.hyprctl, "query", lambda cmd: POLKIT_RAW)
+    _batch(monkeypatch, MON, [])
+    with pytest.raises(trust.TrustError, match="authentication"):
+        trust.guard_pointer(500, 500)
+    trust.guard_pointer(500, 500, allow_auth=True)  # a human intends it
+
+
+def test_click_ui_under_a_polkit_layer_says_a_human_must_answer(monkeypatch):
+    monkeypatch.setattr(trust.hyprctl, "query", lambda cmd: POLKIT_RAW)
+    with pytest.raises(trust.TrustError, match="human"):
+        trust.guard_covering_layer(500, 500)

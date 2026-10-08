@@ -478,11 +478,26 @@ LAYER_LEVELS = ("background", "bottom", "top", "overlay")
 # session is trust.session_locked()'s job. The kind is kept because older
 # lockers did draw with layer-shell, and because a surface that names
 # itself 'lockscreen' should not be mistaken for an ordinary overlay.
+#
+# `auth` is a polkit prompt drawn as a layer rather than a window, which a
+# shell-integrated agent does (Omarchy 4's Quickshell agent), so the window
+# class interlock (trust._AUTH_CLASSES) never sees it. It is checked first.
+# The omarchy-* names are Omarchy 4's Quickshell surfaces (omacom/omarchy
+# shell/plugins): its menu, pickers and bar popups grab the keyboard over
+# the whole screen, which is a launcher's shape.
 _LAYER_KINDS = (
-    ("launcher", ("wofi", "rofi", "fuzzel", "tofi", "anyrun", "walker", "launcher")),
-    ("bar", ("waybar", "hyprpanel", "ags-", "bar")),
-    ("notifications", ("mako", "dunst", "swaync", "notification")),
-    ("lock", ("hyprlock", "swaylock", "lockscreen")),
+    ("auth", ("omarchy-polkit", "polkit")),
+    (
+        "launcher",
+        (
+            "wofi", "rofi", "fuzzel", "tofi", "anyrun", "walker", "launcher",
+            "omarchy-menu", "omarchy-clipboard", "omarchy-emojis",
+            "omarchy-image-selector", "omarchy-keyboard-panel",
+        ),
+    ),
+    ("bar", ("waybar", "hyprpanel", "ags-", "bar", "omarchy-bar")),
+    ("notifications", ("mako", "dunst", "swaync", "notification", "omarchy-notifications")),
+    ("lock", ("hyprlock", "swaylock", "lockscreen", "omarchy-lock")),
     ("osk", ("wvkbd", "squeekboard", "osk")),
 )
 
@@ -502,11 +517,11 @@ def layer_kind(namespace: str) -> str:
 # POINTER input aimed at whatever its surface covers, and each is a seat
 # takeover a running `sequence` must notice. Bars and notification popups
 # are surfaces too, but not a takeover.
-FOCUS_STEALING_KINDS = frozenset({"launcher", "lock", "osk"})
+FOCUS_STEALING_KINDS = frozenset({"auth", "launcher", "lock", "osk"})
 
 # the subset that actually holds a keyboard grab, so synthetic keys reach
 # the layer no matter which window was focused
-KEYBOARD_GRABBING_KINDS = frozenset({"launcher", "lock"})
+KEYBOARD_GRABBING_KINDS = frozenset({"auth", "launcher", "lock"})
 
 
 def parse_layers(raw: dict[str, Any]) -> list[dict[str, Any]]:

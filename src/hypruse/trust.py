@@ -265,6 +265,15 @@ def guard_pointer(x: float | None, y: float | None, allow_auth: bool = False) ->
                 "dialog; refusing the click. Pass allow_auth=true only if a human intends "
                 "this credential action."
             )
+        # a shell-integrated polkit agent draws its prompt as a layer, which
+        # `clients` never lists (Omarchy 4)
+        layer = covering_layer(px, py)
+        if layer is not None and layer["kind"] == "auth":
+            raise TrustError(
+                f"({px:.0f}, {py:.0f}) is covered by {layer['namespace']!r}, a system "
+                "authentication prompt; refusing the click. Pass allow_auth=true only "
+                "if a human intends this credential action."
+            )
 
 
 def _covers(client: dict[str, Any], x: float, y: float) -> bool:
@@ -484,8 +493,11 @@ def guard_keyboard_layer(window_given: bool, allow_auth: bool) -> str:
     grabbers = [s for s in surfaces if s.get("kind") in hyprctl.KEYBOARD_GRABBING_KINDS]
     if not grabbers:
         return ""
-    # a lock screen outranks a launcher when both are somehow mapped
-    grabber = next((s for s in grabbers if s["kind"] == "lock"), grabbers[0])
+    # a lock screen outranks an authentication prompt, which outranks a
+    # launcher, when several are somehow mapped
+    grabber = next(
+        (s for kind in ("lock", "auth") for s in grabbers if s["kind"] == kind), grabbers[0]
+    )
     kind, ns = grabber["kind"], grabber["namespace"]
     if window_given:
         raise TrustError(
@@ -506,6 +518,12 @@ def guard_keyboard_layer(window_given: bool, allow_auth: bool) -> str:
             "would feed a credential prompt. Pass allow_auth=true only if a "
             "human intends that credential entry."
         )
+    if kind == "auth" and not allow_auth:
+        raise TrustError(
+            f"the authentication prompt {ns!r} holds the keyboard: typing now "
+            f"would feed a credential prompt. {_dismiss_advice(kind)} Pass "
+            "allow_auth=true only if a human intends that credential entry."
+        )
     return (
         f"; NOTE: the {kind} layer {ns!r} holds the keyboard grab, so the "
         "keys went to it, not to the focused window"
@@ -519,6 +537,8 @@ def _dismiss_advice(kind: str) -> str:
     layer instead would route it into the credential refusal below."""
     if kind == "lock":
         return "Unlock the session first."
+    if kind == "auth":
+        return "A human has to answer or cancel the authentication prompt first."
     if kind == "osk":
         return "Dismiss the on-screen keyboard first."
     return (
