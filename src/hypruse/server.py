@@ -1093,7 +1093,7 @@ def _launch_and_wait(rule_command: str, wait_s: float) -> dict[str, Any] | None:
 
 @journal.journaled("act")
 def launch(command: str, workspace: str = "", wait_s: float = 8.0) -> dict[str, Any] | str:
-    """Run `command` via Hyprland exec. Optional `workspace` placement
+    """Open an app: run `command` via Hyprland exec. Optional `workspace` placement
     (silent, works even for single-instance apps like browsers, whose
     window gets moved after it appears) and `wait_s` (1-30, default 8;
     raise for slow apps). Returns the new window's
@@ -1666,18 +1666,51 @@ if READONLY:
         )
 
 
+# Display names for the MCP tool annotations; clients show these in tool
+# lists and approval prompts, where a bare `hypr` or `ui` says little.
+_TITLES = {
+    "desktop": "Desktop state",
+    "screenshot": "Screenshot",
+    "zoom": "Zoom in on a point",
+    "ui": "Read app controls",
+    "marks": "Screenshot with numbered controls",
+    "binds": "List keybinds",
+    "wait_for": "Wait for a desktop event",
+    "pointer": "Mouse",
+    "keyboard": "Keyboard",
+    "click_ui": "Click a control by name",
+    "hypr": "Windows and workspaces",
+    "launch": "Launch an app",
+    "use_bind": "Run a keybind",
+    "sequence": "Run several actions",
+    "clipboard": "Clipboard",
+}
+
+
 def build_app() -> Any:
-    """The FastMCP application with the tools registered for this mode."""
+    """The FastMCP application with the tools registered for this mode.
+    Observation tools are annotated read-only and closed-world (they read
+    the local desktop and change nothing); acting tools are annotated
+    destructive, since a click or a keypress can do anything the user
+    could."""
     from mcp.server.fastmcp import FastMCP
+    from mcp.types import ToolAnnotations
 
     app_ = FastMCP("hypruse", instructions=_instructions)
     for observe_tool in _OBSERVE_TOOLS:
-        app_.tool()(observe_tool)
+        name = observe_tool.__name__
+        app_.tool(annotations=ToolAnnotations(
+            title=_TITLES[name], readOnlyHint=True, openWorldHint=False
+        ))(observe_tool)
     if not READONLY:
-        for acting_tool in (pointer, keyboard, click_ui, hypr, launch, use_bind, sequence):
-            app_.tool()(acting_tool)
+        acting = [pointer, keyboard, click_ui, hypr, launch, use_bind, sequence]
         if CLIPBOARD:
-            app_.tool()(clipboard)
+            acting.append(clipboard)
+        for acting_tool in acting:
+            name = acting_tool.__name__
+            app_.tool(annotations=ToolAnnotations(
+                title=_TITLES[name], readOnlyHint=False, destructiveHint=True
+            ))(acting_tool)
     return app_
 
 

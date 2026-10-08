@@ -119,3 +119,19 @@ def test_full_mode_docstrings_still_reference_acting_tools(reloaded):
     assert "click_ui" in tools["ui"]
     assert "use_bind" in tools["binds"]
     assert "click_ui(mark=N)" in tools["marks"]
+
+
+def test_every_tool_declares_a_title_and_whether_it_acts(reloaded, monkeypatch):
+    # clients and directories read these hints (approval prompts, quality
+    # scores); an observation tool must say it changes nothing, and an
+    # acting one must not claim to be harmless
+    monkeypatch.setenv("HYPRUSE_CLIPBOARD", "1")
+    tools = asyncio.run(reloaded(None).mcp.list_tools())
+    assert {t.name for t in tools} == OBSERVE | ACT | {"clipboard"}
+    for t in tools:
+        a = t.annotations
+        assert a is not None and a.title, t.name
+        if t.name in OBSERVE:
+            assert a.readOnlyHint is True and a.openWorldHint is False, t.name
+        else:
+            assert a.readOnlyHint is False and a.destructiveHint is True, t.name
