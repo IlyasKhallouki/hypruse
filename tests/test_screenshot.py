@@ -161,3 +161,81 @@ def test_window_on_a_pulled_up_special_workspace_without_an_id_is_shown():
     assert screenshot._shown({**HIDDEN, "workspace": special}, monitors) is True
     other = {"type": "special", "name": "special:notes"}
     assert screenshot._shown({**HIDDEN, "workspace": other}, monitors) is False
+
+
+# HiDPI (verification round for 0.12.0): grim -T renders the window's own
+# buffer, which Hyprland sizes at window size x the scale of the window's
+# monitor, and grim's -s then scales THAT buffer. -g is different: there -s
+# is an absolute logical-to-pixel factor. This fake follows both rules.
+HIDPI = [
+    {"id": 0, "name": "eDP-1", "x": 0, "y": 0, "width": 2880, "height": 1800,
+     "scale": 2.0, "activeWorkspace": {"id": 1}, "specialWorkspace": {"id": 0}},
+    {"id": 1, "name": "DP-1", "x": 1440, "y": 0, "width": 1920, "height": 1080,
+     "scale": 1.0, "activeWorkspace": {"id": 3}, "specialWorkspace": {"id": 0}},
+]
+WIDE_HIDDEN = {"address": "0xh", "class": "foot", "at": [10, 20], "size": [1000, 600],
+               "workspace": {"id": 2}, "monitor": 0, "stableId": "1800002a"}
+WIDE_SHOWN = {**WIDE_HIDDEN, "address": "0xs", "workspace": {"id": 1}, "stableId": "18000010"}
+
+
+def _hidpi_grim(monkeypatch, clients):
+    monkeypatch.setattr(screenshot.hyprctl, "query", lambda what: {
+        "monitors": HIDPI, "clients": clients, "activewindow": clients[0]}[what])
+    calls = []
+
+    def fake_grim(args):
+        calls.append(args)
+        s = float(args[args.index("-s") + 1]) if "-s" in args else None
+        if "-T" in args:
+            c = next(c for c in clients if c["stableId"] == args[args.index("-T") + 1])
+            own = next(m["scale"] for m in HIDPI if m["id"] == c["monitor"])
+            w, h = c["size"][0] * own, c["size"][1] * own
+            f = s if s is not None else 1.0
+        else:
+            w, h = (int(v) for v in args[args.index("-g") + 1].split(" ")[1].split("x"))
+            f = s if s is not None else 2.0  # grim's default: the greatest output scale
+        return _png(round(w * f), round(h * f))
+
+    monkeypatch.setattr(screenshot, "_grim", fake_grim)
+    return calls
+
+
+def test_hidpi_hidden_window_downscaled_to_the_edge_cap(monkeypatch):
+    calls = _hidpi_grim(monkeypatch, [WIDE_HIDDEN])
+    _, meta = screenshot.capture(window="0xh", max_edge=1568)
+    assert "-g" not in calls[-1] and "-T" in calls[-1]
+    assert calls[-1][calls[-1].index("-s") + 1] == "0.784"  # a fraction of the 2000 px buffer
+    assert meta["image"] == [1568, 941]
+    assert meta["scale"] == 1.568  # global = geometry[:2] + pixel / 1.568
+
+
+def test_hidpi_covered_window_is_still_its_own_pixels(monkeypatch):
+    calls = _hidpi_grim(monkeypatch, [WIDE_SHOWN])
+    _, meta = screenshot.capture(window="0xs", max_edge=1568)
+    assert all("-g" not in a for a in calls)
+    assert meta["image"] == [1568, 941] and meta["visible"] is True
+
+
+def test_hidpi_explicit_downscale(monkeypatch):
+    calls = _hidpi_grim(monkeypatch, [WIDE_HIDDEN])
+    _, meta = screenshot.capture(window="0xh", scale=0.5)
+    assert calls[-1][calls[-1].index("-s") + 1] == "0.5"
+    assert (meta["image"], meta["scale"]) == ([1000, 600], 1.0)
+
+
+def test_hidpi_full_resolution(monkeypatch):
+    calls = _hidpi_grim(monkeypatch, [WIDE_HIDDEN])
+    _, meta = screenshot.capture(window="0xh")
+    assert "-s" not in calls[-1]
+    assert (meta["image"], meta["scale"]) == ([2000, 1200], 2.0)
+
+
+def test_window_overhanging_a_sharper_monitor_uses_its_own_scale(monkeypatch):
+    # a floating window on the 1.0 monitor whose rect pokes onto the 2.0 one:
+    # its buffer is at 1.0, so the size check must not expect 2.0
+    over = {**WIDE_SHOWN, "address": "0xo", "at": [1300, 100], "size": [400, 300],
+            "workspace": {"id": 3}, "monitor": 1}
+    calls = _hidpi_grim(monkeypatch, [over])
+    _, meta = screenshot.capture(window="0xo")
+    assert all("-g" not in a for a in calls)
+    assert (meta["image"], meta["scale"]) == ([400, 300], 1.0)

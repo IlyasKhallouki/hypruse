@@ -135,7 +135,9 @@ def _grab_fitting(
     logical-to-pixel factor (grim's default equals the output scale, so
     image = logical_size * factor). The flag therefore carries
     base_scale * s; passing the bare fraction would shrink the image by
-    base_scale twice on any scaled monitor and desync the metadata."""
+    base_scale twice on any scaled monitor and desync the metadata.
+    That holds for -g and -o; a -T capture scales the window's own
+    buffer instead, so _grab_toplevel passes base_scale 1.0."""
     for fmt, quality, s in _fit_ladder(start_scale, lossless):
         args = list(base_args)
         if abs(s - 1.0) > 1e-6:
@@ -239,36 +241,52 @@ def _not_shown(c: dict[str, Any], why: str) -> ScreenshotError:
     )
 
 
+def _own_scale(c: dict[str, Any], monitors: list[dict[str, Any]], fallback: float) -> float:
+    """The scale of the monitor the window belongs to (clients' `monitor`
+    is a monitor id), which is the scale Hyprland renders its buffer at."""
+    m = next((m for m in monitors if m.get("id") == c.get("monitor")), None)
+    return float(m.get("scale", 1.0)) if m is not None else fallback
+
+
 def _grab_toplevel(
     c: dict[str, Any],
-    start_scale: float,
+    scale: float,
+    max_edge: int | None,
     max_bytes: int | None,
     lossless: bool,
-    base_scale: float,
+    own_scale: float,
 ) -> tuple[bytes, str, float] | None:
     """The window's own surface via `grim -T`, so a window on a hidden
     workspace or under another window still returns its own pixels.
     Hyprland's stableId is the window's ext-foreign-toplevel-list
-    identifier, which is what -T takes. None when that path is unavailable
-    (no stableId on older Hyprland, grim before 1.5, no toplevel capture in
-    the compositor) or when the image is not the window's size: a
-    client-side shadow around the surface would offset every mapped point,
-    where the screen crop maps exactly."""
+    identifier, which is what -T takes. Returns (data, format, factor),
+    factor being image pixels per logical pixel.
+
+    grim renders a toplevel from its buffer, which Hyprland sizes at the
+    window's size times its OWN monitor's scale, and -s scales that
+    buffer. That differs from -g, where -s is an absolute
+    logical-to-pixel factor, so the fraction goes to grim bare
+    (base_scale 1.0) and the window's own scale is folded in here.
+
+    None when that path is unavailable (no stableId on older Hyprland,
+    grim before 1.5, no toplevel capture in the compositor) or when the
+    image is not the window's size: a client-side shadow around the
+    surface would offset every mapped point, where the screen crop maps
+    exactly."""
     toplevel = c.get("stableId")
     if not toplevel:
         return None
+    w, h = c["size"]
+    start = scale or _cap_scale(max(w, h) * own_scale, max_edge)
     try:
-        data, fmt, applied = _grab_fitting(
-            ["-T", str(toplevel)], start_scale, max_bytes, lossless, base_scale
-        )
+        data, fmt, applied = _grab_fitting(["-T", str(toplevel)], start, max_bytes, lossless, 1.0)
         iw, ih = image_size(data)
     except ScreenshotError:
         return None
-    w, h = c["size"]
-    factor = base_scale * applied
+    factor = own_scale * applied
     if abs(iw - w * factor) > 2 or abs(ih - h * factor) > 2:
         return None
-    return data, fmt, applied
+    return data, fmt, factor
 
 
 def capture(
@@ -333,16 +351,19 @@ def capture(
     if window:
         # cropping the window's rect returns whatever the screen shows there,
         # another workspace's windows when its own is hidden (#4)
-        grabbed = _grab_toplevel(c, start_scale, max_bytes, lossless, base_scale)
+        own = _own_scale(c, monitors, base_scale)
+        grabbed = _grab_toplevel(c, scale, max_edge, max_bytes, lossless, own)
         if grabbed is None and not meta["visible"]:
             raise _not_shown(c, "grim cannot capture it off screen here")
-    data, fmt, applied = grabbed or _grab_fitting(
-        base, start_scale, max_bytes, lossless, base_scale
-    )
+    if grabbed is not None:
+        data, fmt, factor = grabbed
+    else:
+        data, fmt, applied = _grab_fitting(base, start_scale, max_bytes, lossless, base_scale)
+        factor = base_scale * applied
     iw, ih = image_size(data)
     meta["image"] = [iw, ih]
     meta["format"] = fmt
-    meta["scale"] = round(base_scale * applied, 6)
+    meta["scale"] = round(factor, 6)
     meta["coords"] = "click a target at global = geometry[:2] + image_pixel / scale"
     if meta.get("visible") is False:
         meta["coords"] += (
