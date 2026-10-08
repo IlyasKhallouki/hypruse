@@ -31,16 +31,24 @@ All notable changes to this project are documented here. The format follows
   cropped the window's rectangle out of the screen, so a window on a hidden
   workspace or under another window came back as some other window's
   pixels, labelled as this one. It now captures the window itself with
-  `grim -T` (grim 1.5+), and the metadata gains `visible`. Where that is
-  not available, a window on screen falls back to the crop and a hidden one
-  is refused, with how to bring it forward. `zoom(window=)` refuses a
-  hidden window.
+  `grim -T` (grim 1.5+), scaled by the window's own monitor, and the
+  metadata gains `visible`. Many apps stop drawing while hidden, so a
+  hidden window's capture carries a note that it may show how the window
+  last looked, and `stable=true` reports `stable: null` for it rather than
+  vouching for a frozen frame. Window captures are refused while the
+  session is locked, since Hyprland would hand over the window behind the
+  lock. Where `grim -T` is not available, a window on screen falls back to
+  the crop and a hidden one is refused, with how to bring it forward.
+  `zoom(window=)` refuses a hidden window.
 - **Qt apps with GTK theme integration** (#6, thanks @Pillumz). A Qt app
   run with `QT_QPA_PLATFORMTHEME=gtk3` registers two accessibility roots
   under one PID, the empty GTK bridge first, so `ui` found no controls. The
   first of them that holds a window now wins.
 - A stable-capture test could pass by accident on a fast machine (#5,
   thanks @Pillumz).
+- `hypruse pointer scroll DY` without DX exited with a usage error on
+  Python 3.11 and on 3.12 before 3.12.7, an argparse bug that also kept CI
+  red since 0.11.0.
 
 ### Added
 - Every MCP tool declares a title and annotations: the seven observation

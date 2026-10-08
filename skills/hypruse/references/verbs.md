@@ -102,7 +102,8 @@ step after a "seat moved" refusal.
 hypruse screenshot [--window ADDR|active] [--region x,y,WxH] [--scale F] [--stable] [--lossless] [--out PATH]
 ```
 
-Flags: `--window` captures one window, even on a hidden workspace (`active` for the focused one; the
+Flags: `--window` captures one window, even on a hidden workspace, where it may
+show how the app last looked; refused while the session is locked (`active` for the focused one; the
 cheapest way to read one app); `--region` captures an arbitrary global
 rectangle; `--scale` 0.1-1.0 is a deliberate downscale, normally unset;
 `--stable` waits up to 2 s until two consecutive frames match, so a capture
