@@ -17,7 +17,7 @@ compatibility: Linux with a running Hyprland session and the hypruse CLI on PATH
 allowed-tools: Bash(hypruse doctor:*) Bash(hypruse desktop:*) Bash(hypruse screenshot:*) Bash(hypruse zoom:*) Bash(hypruse ui:*) Bash(hypruse marks:*) Bash(hypruse binds:*) Bash(hypruse wait_for:*) Bash(hypruse wait-for:*) Bash(hypruse --help) Read
 metadata:
   author: IlyasKhallouki
-  version: "0.11.0"
+  version: "0.12.0"
   homepage: https://github.com/IlyasKhallouki/hypruse
 ---
 

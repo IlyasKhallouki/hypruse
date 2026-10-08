@@ -4,6 +4,52 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions follow
 [SemVer](https://semver.org/).
 
+## [0.12.0] - 2026-10-08
+
+### Fixed
+- **Hyprland 0.57 workspaces.** Hyprland 0.57 drops `id` from special and
+  named workspaces (hyprwm/Hyprland#16269). `desktop` sorted workspaces by
+  id and would have crashed for anyone with a scratchpad up, and the
+  visibility checks would have stopped seeing a pulled-up scratchpad, so
+  the confinement guard would have failed open over it. A workspace is now
+  named by its number when it has one and by its name otherwise
+  (`"special:vault"`), in `desktop` and in every check. On 0.56 too, a
+  pulled-up special workspace now reads `visible: true` in `desktop`.
+- **The lock guard asks the compositor.** It used to look for a hyprlock
+  or swaylock process. It now asks Hyprland (`hyprctl -j locked`, 0.41+),
+  which also catches Omarchy 4's lock, built into its Quickshell shell,
+  and a locker that crashed, which leaves the session locked. The process
+  scan still names the locker in the refusal, and decides alone only when
+  Hyprland cannot be asked.
+- **Omarchy 4's polkit prompt.** Omarchy 4 draws its polkit prompt as a
+  layer surface, not a window, so the auth interlock never saw it. A new
+  `auth` layer kind refuses typing and clicks into it unless `allow_auth`,
+  and stops `click_ui` and a running `sequence`. Omarchy's menu, pickers,
+  bar popups, bar and notifications are classified too, instead of
+  `unknown`.
+- **Screenshots of hidden or covered windows** (#4). `screenshot(window=)`
+  cropped the window's rectangle out of the screen, so a window on a hidden
+  workspace or under another window came back as some other window's
+  pixels, labelled as this one. It now captures the window itself with
+  `grim -T` (grim 1.5+), and the metadata gains `visible`. Where that is
+  not available, a window on screen falls back to the crop and a hidden one
+  is refused, with how to bring it forward. `zoom(window=)` refuses a
+  hidden window.
+- **Qt apps with GTK theme integration** (#6, thanks @Pillumz). A Qt app
+  run with `QT_QPA_PLATFORMTHEME=gtk3` registers two accessibility roots
+  under one PID, the empty GTK bridge first, so `ui` found no controls. The
+  first of them that holds a window now wins.
+- A stable-capture test could pass by accident on a fast machine (#5,
+  thanks @Pillumz).
+
+### Added
+- Every MCP tool declares a title and annotations: the seven observation
+  tools are read-only, the acting ones destructive.
+
+### Changed
+- `launch`'s description opens with "Open an app".
+- Removed the `Environment :: X11 Applications` classifier.
+
 ## [0.11.0] - 2026-09-13
 
 ### Added

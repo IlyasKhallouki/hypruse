@@ -3,7 +3,7 @@
   "name": "io.github.IlyasKhallouki/hypruse",
   "title": "hypruse",
   "description": "Computer use for Hyprland: semantic desktop state over IPC, plus vision and native input",
-  "version": "0.11.0",
+  "version": "0.12.0",
   "websiteUrl": "https://github.com/IlyasKhallouki/hypruse#readme",
   "repository": {
     "url": "https://github.com/IlyasKhallouki/hypruse",
@@ -15,7 +15,7 @@
       "registryType": "pypi",
       "registryBaseUrl": "https://pypi.org",
       "identifier": "hypruse",
-      "version": "0.11.0",
+      "version": "0.12.0",
       "runtimeHint": "uvx",
       "transport": {
         "type": "stdio"
