@@ -1118,7 +1118,7 @@ def launch(command: str, workspace: str = "", wait_s: float = 8.0) -> dict[str, 
         "address": win["address"],
         "class": win.get("class", ""),
         "title": win.get("title", ""),
-        "workspace": ws.get("id"),
+        "workspace": hyprctl.workspace_ref(ws),
     }
     landed = {str(ws.get("id")), str(ws.get("name", ""))}
     if workspace and workspace not in landed:

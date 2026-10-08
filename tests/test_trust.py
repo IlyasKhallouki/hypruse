@@ -107,6 +107,22 @@ def test_guard_pointer_includes_special_workspace(monkeypatch):
         trust.guard_pointer(50, 50)  # over the scratchpad vault, must be refused
 
 
+def test_guard_pointer_includes_special_workspace_without_ids(monkeypatch):
+    # Hyprland 0.57 drops "id" from special workspaces: the pulled-up
+    # scratchpad is known only by name and must still count as on screen
+    monkeypatch.setenv("HYPRUSE_CONFINE", "class:kitty")
+    monkeypatch.setenv("HYPRUSE_AUTH_GUARD", "0")
+    monitors = [{"name": "m", "activeWorkspace": {"id": 1, "type": "normal", "name": "1"},
+                 "specialWorkspace": {"type": "special", "name": "special:vault"}}]
+    windows = [
+        {"address": "0xvault", "class": "keepassxc", "at": [40, 40], "size": [300, 300],
+         "workspace": {"type": "special", "name": "special:vault"}, "mapped": True},
+    ]
+    _batch(monkeypatch, monitors, windows)
+    with pytest.raises(trust.TrustError, match="outside the confinement"):
+        trust.guard_pointer(50, 50)
+
+
 def test_guard_pointer_coordinate_less_uses_cursor(monkeypatch):
     # a click with no x/y lands at the current cursor; the guard must
     # resolve and check THAT point, not skip

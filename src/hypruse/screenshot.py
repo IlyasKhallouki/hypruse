@@ -227,7 +227,7 @@ def _find_window(window: str, clients: list[dict[str, Any]], active: str | None)
 
 
 def _shown(c: dict[str, Any], monitors: list[dict[str, Any]]) -> bool:
-    return (c.get("workspace") or {}).get("id") in hyprctl.visible_workspaces(monitors)
+    return hyprctl.workspace_ref(c.get("workspace")) in hyprctl.visible_workspaces(monitors)
 
 
 def _not_shown(c: dict[str, Any], why: str) -> ScreenshotError:

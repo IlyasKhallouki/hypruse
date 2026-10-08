@@ -152,3 +152,12 @@ def test_zoom_refuses_a_hidden_window(monkeypatch):
     with pytest.raises(screenshot.ScreenshotError, match="workspace 2"):
         screenshot.zoom_region(100, 100, window="0xb")
     assert screenshot.zoom_region(100, 100, window="0xa")[2:] == (480, 360)
+
+
+def test_window_on_a_pulled_up_special_workspace_without_an_id_is_shown():
+    # Hyprland 0.57: special workspaces carry a name and no id
+    special = {"type": "special", "name": "special:vault"}
+    monitors = [{**ONE_MONITOR[0], "specialWorkspace": special}]
+    assert screenshot._shown({**HIDDEN, "workspace": special}, monitors) is True
+    other = {"type": "special", "name": "special:notes"}
+    assert screenshot._shown({**HIDDEN, "workspace": other}, monitors) is False

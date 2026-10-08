@@ -215,7 +215,7 @@ def _windows_under(x: float, y: float) -> list[dict[str, Any]]:
         c
         for c in clients
         if c.get("mapped", True)
-        and (c.get("workspace") or {}).get("id") in visible
+        and hyprctl.workspace_ref(c.get("workspace")) in visible
         and _covers(c, x, y)
     ]
 

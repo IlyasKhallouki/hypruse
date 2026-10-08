@@ -392,17 +392,31 @@ def contains(rect: tuple[int, int, int, int], x: float, y: float) -> bool:
     return rx <= x < rx + rw and ry <= y < ry + rh
 
 
+def workspace_ref(ws: dict[str, Any] | None) -> int | str | None:
+    """How hypruse names a workspace: its number when it has one, else its
+    name ("special:vault", a named workspace). Hyprland 0.57 drops "id"
+    from special and named workspaces everywhere a workspace object
+    appears (hyprwm/Hyprland#16269), while 0.56 gives every workspace one.
+    Both shapes name a workspace the same way in monitors, clients and the
+    workspace list, so refs from one query compare equal across them.
+    None for the empty slot a monitor reports when no special workspace
+    is up (0.56: id 0 and name ""; 0.57: all empty strings)."""
+    ws = ws or {}
+    ref = ws["id"] if "id" in ws else ws.get("name")
+    return ref or None
+
+
 def visible_workspaces(monitors: list[dict[str, Any]]) -> set[Any]:
-    """Workspace ids currently shown on any monitor, INCLUDING a pulled-up
-    special/scratchpad workspace (reported separately from activeWorkspace
-    and drawn on top): a scratchpad password manager must not slip the
-    coverage check."""
+    """Refs (workspace_ref) of the workspaces shown on any monitor,
+    INCLUDING a pulled-up special/scratchpad workspace (reported separately
+    from activeWorkspace and drawn on top): a scratchpad password manager
+    must not slip the coverage check."""
     visible: set[Any] = set()
     for m in monitors:
-        visible.add((m.get("activeWorkspace") or {}).get("id"))
-        special = (m.get("specialWorkspace") or {}).get("id")
-        if special:  # 0 = no special workspace up
-            visible.add(special)
+        for slot in ("activeWorkspace", "specialWorkspace"):
+            ref = workspace_ref(m.get(slot))
+            if ref is not None:
+                visible.add(ref)
     return visible
 
 
@@ -416,7 +430,7 @@ def _window(c: dict[str, Any]) -> dict[str, Any]:
     """Trim a hyprctl client to what a model needs to reason and act."""
     win: dict[str, Any] = {
         "address": c["address"],
-        "workspace": c.get("workspace", {}).get("id"),
+        "workspace": workspace_ref(c.get("workspace")),
         "class": c.get("class", ""),
         "title": c.get("title", ""),
         "at": c.get("at"),
@@ -442,7 +456,7 @@ def _monitor(m: dict[str, Any]) -> dict[str, Any]:
         "geometry": [x, y, w, h],
         "scale": m.get("scale", 1.0),
         "focused": m.get("focused", False),
-        "active_workspace": m.get("activeWorkspace", {}).get("id"),
+        "active_workspace": workspace_ref(m.get("activeWorkspace")),
     }
     if int(m.get("transform", 0)):
         out["transform"] = int(m["transform"])
@@ -529,6 +543,13 @@ def parse_layers(raw: dict[str, Any]) -> list[dict[str, Any]]:
     return out
 
 
+def _workspace_order(w: dict[str, Any]) -> tuple[bool, int, str]:
+    """Numbered workspaces first, by number; then named and special ones
+    by name (Hyprland 0.57 gives those no number to sort on)."""
+    ref = workspace_ref(w)
+    return (not isinstance(ref, int), ref if isinstance(ref, int) else 0, str(ref))
+
+
 def snapshot_from(
     monitors: list[dict[str, Any]],
     workspaces: list[dict[str, Any]],
@@ -538,18 +559,18 @@ def snapshot_from(
     layers: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Pure assembly of the desktop state, separated from IPC for testability."""
-    visible = {m.get("activeWorkspace", {}).get("id") for m in monitors}
+    visible = visible_workspaces(monitors)
     snap = {
         "monitors": [_monitor(m) for m in monitors],
         "workspaces": [
             {
-                "id": w["id"],
+                "id": workspace_ref(w),
                 "name": w.get("name", ""),
                 "monitor": w.get("monitor", ""),
                 "windows": w.get("windows", 0),
-                "visible": w["id"] in visible,
+                "visible": workspace_ref(w) in visible,
             }
-            for w in sorted(workspaces, key=lambda w: w["id"])
+            for w in sorted(workspaces, key=_workspace_order)
         ],
         "windows": [_window(c) for c in clients if c.get("mapped", True)],
         "active_window": (active_window or {}).get("address"),

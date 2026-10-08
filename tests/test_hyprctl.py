@@ -475,3 +475,49 @@ def test_dispatch_does_not_retry_on_a_probe_it_could_not_run(monkeypatch):
         ("dispatch", 'hl.dsp.window.close({ window = "address:0xabc" })'),
         ("-j", "status"),
     ]  # one attempt, one failed probe, no second dispatch
+
+
+# Hyprland 0.57 (hyprwm/Hyprland#16269 and the workspace refactor before
+# it): only a NUMBERED workspace carries "id", wherever a workspace object
+# appears (monitors, clients, workspaces). Special and named workspaces are
+# known by name alone, and "no special workspace up" is all empty strings.
+NUMBERED_057 = {"address": "1", "id": 1, "type": "normal", "name": "1"}
+NAMED_057 = {"address": "name:notes", "type": "normal", "name": "notes"}
+SPECIAL_057 = {"address": "special:vault", "type": "special", "name": "special:vault"}
+NO_SPECIAL_057 = {"address": "", "type": "", "name": ""}
+
+
+def test_workspace_ref_is_the_number_else_the_name():
+    assert hyprctl.workspace_ref(NUMBERED_057) == 1
+    assert hyprctl.workspace_ref(NAMED_057) == "notes"
+    assert hyprctl.workspace_ref(SPECIAL_057) == "special:vault"
+    assert hyprctl.workspace_ref({"id": -98, "name": "special:vault"}) == -98  # 0.56
+    assert hyprctl.workspace_ref(NO_SPECIAL_057) is None
+    assert hyprctl.workspace_ref({"id": 0, "name": ""}) is None  # 0.56: none up
+    assert hyprctl.workspace_ref(None) is None
+
+
+def test_visible_workspaces_without_ids():
+    monitors = [
+        {"activeWorkspace": NUMBERED_057, "specialWorkspace": SPECIAL_057},
+        {"activeWorkspace": NAMED_057, "specialWorkspace": NO_SPECIAL_057},
+    ]
+    assert hyprctl.visible_workspaces(monitors) == {1, "special:vault", "notes"}
+
+
+def test_snapshot_without_workspace_ids():
+    # sorting the workspace list by w["id"] raised KeyError here, taking
+    # the whole desktop snapshot down for anyone with a scratchpad
+    monitors = [{"name": "eDP-1", "x": 0, "y": 0, "width": 1920, "height": 1080,
+                 "scale": 1.0, "activeWorkspace": NAMED_057,
+                 "specialWorkspace": SPECIAL_057}]
+    workspaces = [{**w, "monitor": "eDP-1", "windows": 1}
+                  for w in (SPECIAL_057, NAMED_057, NUMBERED_057)]
+    clients = [{"address": "0xa", "class": "foot", "title": "t", "at": [0, 0],
+                "size": [10, 10], "workspace": SPECIAL_057}]
+    s = hyprctl.snapshot_from(monitors, workspaces, clients, None, None)
+    assert [w["id"] for w in s["workspaces"]] == [1, "notes", "special:vault"]
+    shown = {w["id"]: w["visible"] for w in s["workspaces"]}
+    assert shown == {1: False, "notes": True, "special:vault": True}
+    assert s["windows"][0]["workspace"] == "special:vault"
+    assert s["monitors"][0]["active_workspace"] == "notes"
