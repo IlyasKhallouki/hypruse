@@ -321,11 +321,15 @@ def _level_rank(level: str) -> int:
 
 # Session lockers. These are ext-session-lock-v1 clients, NOT layer-shell
 # clients, so they never appear in `hyprctl layers` and no layer-based
-# check can see them; Hyprland exposes no lock state over hyprctl either.
-# The reliable signal is the PROCESS: the protocol hands the session back
-# the instant the locking client exits, so a live locker means a locked
-# (or actively locking) session. Older swaylock/gtklock releases drew
-# their lock with layer-shell instead, which `layer_kind` still catches.
+# check can see them. The authority is the compositor: `hyprctl locked`
+# (Hyprland 0.41+) reports the lock itself, whoever holds it. That covers
+# lockers no process scan can find (Omarchy 4 locks from inside its
+# Quickshell shell) and a crashed locker, which ext-session-lock-v1 says
+# must leave the session LOCKED, not hand it back. The process scan below
+# names a running locker for the refusal message, and is the whole check
+# only when the compositor cannot be asked. Older swaylock/gtklock
+# releases drew their lock with layer-shell instead, which `layer_kind`
+# still catches.
 #
 # Matched against /proc/PID/comm, which the kernel caps at TASK_COMM_LEN-1
 # = 15 characters, so every entry here MUST be <= 15 chars or it can never
@@ -355,7 +359,34 @@ assert all(len(c) <= _COMM_MAX for c in _LOCKER_COMMS), (
 _PROC = "/proc"  # overridden in tests so the scan never reads live state
 
 
+def _compositor_locked() -> bool | None:
+    """Hyprland's own answer to "is the session locked" (`hyprctl -j
+    locked`, 0.41+), or None when the compositor cannot be asked (older
+    Hyprland, IPC down) or answers in a shape this does not know."""
+    try:
+        state = hyprctl.query("locked")
+    except Exception:
+        return None
+    locked = state.get("locked") if isinstance(state, dict) else None
+    return locked if isinstance(locked, bool) else None
+
+
 def session_locked() -> str | None:
+    """What holds the session locked, or None: the running locker's name
+    when one can be found, else "lock screen". The compositor decides
+    whether the session is locked (see the note above _LOCKER_COMMS);
+    only when it cannot be asked does a running locker process alone
+    count, the best signal left."""
+    state = _compositor_locked()
+    if state is False:
+        return None
+    locker = _locker_process()
+    if state is True:
+        return locker or "lock screen"
+    return locker
+
+
+def _locker_process() -> str | None:
     """The name of a running session locker, or None. Reads /proc directly
     rather than shelling out, so it adds no binary dependency (~8 ms, the
     same order as one hyprctl call). Best-effort like the layer checks: an

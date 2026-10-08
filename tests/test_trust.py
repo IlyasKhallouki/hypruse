@@ -6,6 +6,7 @@ import pytest
 from hypruse import trust
 
 # bound at import time, so conftest's autouse stub does not hide it
+from hypruse.trust import _compositor_locked as real_compositor_locked
 from hypruse.trust import session_locked as real_session_locked
 
 
@@ -513,6 +514,48 @@ def test_session_locked_fails_open_on_unreadable_proc(monkeypatch):
 
     monkeypatch.setattr(trust.os, "scandir", boom)
     assert real_session_locked() is None  # best-effort, never blocks
+
+
+def test_session_locked_trusts_the_compositor_without_a_locker_process(
+    monkeypatch, tmp_path
+):
+    # Omarchy 4 locks from inside its Quickshell shell, so no locker
+    # process exists to find; and a crashed locker leaves the session
+    # locked (ext-session-lock-v1), so a process scan would read "unlocked"
+    monkeypatch.setattr(trust, "_PROC", _fake_proc(tmp_path, {"101": "quickshell"}))
+    monkeypatch.setattr(trust, "_compositor_locked", lambda: True)
+    assert real_session_locked() == "lock screen"
+
+
+def test_session_locked_names_the_locker_when_one_runs(monkeypatch, tmp_path):
+    monkeypatch.setattr(trust, "_PROC", _fake_proc(tmp_path, {"102": "hyprlock"}))
+    monkeypatch.setattr(trust, "_compositor_locked", lambda: True)
+    assert real_session_locked() == "hyprlock"
+
+
+def test_session_locked_believes_an_unlocked_compositor(monkeypatch, tmp_path):
+    # a locker process alone is not a lock: the compositor knows
+    monkeypatch.setattr(trust, "_PROC", _fake_proc(tmp_path, {"102": "hyprlock"}))
+    monkeypatch.setattr(trust, "_compositor_locked", lambda: False)
+    assert real_session_locked() is None
+
+
+@pytest.mark.parametrize(
+    "reply, expected",
+    [({"locked": True}, True), ({"locked": False}, False), ({}, None), ("ok", None)],
+)
+def test_compositor_locked_reads_hyprctl_locked(monkeypatch, reply, expected):
+    monkeypatch.setattr(trust.hyprctl, "query",
+                        lambda what: reply if what == "locked" else {})
+    assert real_compositor_locked() is expected
+
+
+def test_compositor_locked_is_unknown_when_hyprctl_fails(monkeypatch):
+    def down(what):
+        raise trust.hyprctl.HyprctlError("no socket")
+
+    monkeypatch.setattr(trust.hyprctl, "query", down)
+    assert real_compositor_locked() is None
 
 
 def test_guard_session_lock_refuses_and_allow_auth_downgrades(monkeypatch):

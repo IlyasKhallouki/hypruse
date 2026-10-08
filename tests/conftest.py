@@ -56,3 +56,14 @@ def unlocked_session(monkeypatch):
     locked: green on a developer's desk, red in a locked session.
     """
     monkeypatch.setattr(trust, "session_locked", lambda: None)
+
+
+@pytest.fixture(autouse=True)
+def compositor_lock_unknown(monkeypatch):
+    """The compositor cannot be asked about the lock, unless a test says
+    otherwise, so trust.session_locked() falls back to its /proc scan.
+
+    Asking would run `hyprctl locked` against whatever Hyprland happens
+    to be running the suite.
+    """
+    monkeypatch.setattr(trust, "_compositor_locked", lambda: None)
