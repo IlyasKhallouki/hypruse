@@ -234,6 +234,11 @@ def test_click_with_one_coordinate_is_a_usage_error(capsys):
     assert "click takes X Y" in capsys.readouterr().err
 
 
+def test_scroll_with_a_non_numeric_dx_is_a_usage_error(capsys):
+    assert verbs.main(["pointer", "scroll", "3", "left"]) == verbs.EXIT_USAGE
+    assert "DX must be a number" in capsys.readouterr().err
+
+
 def test_unknown_verb_and_unknown_action_exit_two(capsys):
     with pytest.raises(SystemExit) as e:
         verbs.main(["bogus"])
