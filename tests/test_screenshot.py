@@ -239,3 +239,15 @@ def test_window_overhanging_a_sharper_monitor_uses_its_own_scale(monkeypatch):
     _, meta = screenshot.capture(window="0xo")
     assert all("-g" not in a for a in calls)
     assert (meta["image"], meta["scale"]) == ([400, 300], 1.0)
+
+
+def test_window_capture_is_refused_while_the_session_is_locked(monkeypatch):
+    # Hyprland renders a window share with no session-lock check, so -T
+    # would return the live window behind the human's lock screen
+    calls = _desktop(monkeypatch)
+    monkeypatch.setattr(screenshot.trust, "session_locked", lambda: "hyprlock")
+    with pytest.raises(screenshot.ScreenshotError, match="locked"):
+        screenshot.capture(window="0xa")
+    assert calls == []
+    _, meta = screenshot.capture()  # the monitor shows the lock screen itself
+    assert meta["target"] == "monitor"

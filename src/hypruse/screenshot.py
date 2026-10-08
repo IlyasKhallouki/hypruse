@@ -17,7 +17,7 @@ import subprocess
 import time
 from typing import Any
 
-from hypruse import hyprctl
+from hypruse import hyprctl, trust
 
 
 class ScreenshotError(RuntimeError):
@@ -319,6 +319,15 @@ def capture(
         base_scale = _scale_for_rect(x, y, w, h, monitors)
         physical_long = max(w, h) * base_scale
     elif window:
+        # Hyprland shares a window with no session-lock check, so a window
+        # capture would show what the human's lock screen hides
+        locker = trust.session_locked()
+        if locker:
+            raise ScreenshotError(
+                f"the session is locked ({locker}): window captures are refused "
+                "until a human unlocks it, since they would show what the lock "
+                "screen hides. A monitor screenshot shows the lock screen."
+            )
         active = (hyprctl.query("activewindow") or {}).get("address")
         c = _find_window(window, hyprctl.query("clients"), active)
         (x, y), (w, h) = c["at"], c["size"]
