@@ -263,7 +263,9 @@ Correct handling, in order:
    HYPRUSE_CONFINE if you want me working there."
 
 The same rule holds for every refusal text: an authentication dialog
-(`hyprpolkitagent is a system authentication dialog; refusing to drive it`),
+(`hyprpolkitagent is a system authentication dialog; refusing to drive it`, or
+`the authentication prompt 'omarchy-polkit' holds the keyboard` for a prompt
+the shell draws as a layer),
 a password field, a locked session, a launcher holding the keyboard grab, and
 read-only mode. Only the strict-mode seat refusal carries its own retry (see
 Troubleshooting). When branching in a script, branch on the exit code, not on

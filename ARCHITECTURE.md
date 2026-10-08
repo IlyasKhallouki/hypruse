@@ -139,7 +139,7 @@ beacon pid, releases the button, clears the beacon) and the blunter
 
 1. `desktop` → find `firefox` at `0x…`, workspace 3, geometry.
 2. `hypr focus_window 0x…` (IPC, ~ms), no vision spent.
-3. `screenshot window=0x…` → crop + `geometry`/`scale` (or `ui` to read
+3. `screenshot window=0x…` → the window's own pixels + `geometry`/`scale` (or `ui` to read
    the accessibility tree by name, no pixels).
 4. `pointer click x y`, computed from image pixel via the contract (or
    `click_ui name="Save"` to resolve and click in one call).
@@ -172,10 +172,14 @@ the keyboard grab, so `keyboard` refuses a window-targeted type and
 annotates window-less typing with where the keys really went. A locked
 session is invisible to both: modern lockers (hyprlock, swaylock >=
 1.7) are `ext-session-lock-v1` clients rather than layer-shell ones, so
-they appear in neither `clients` nor `layers`, and Hyprland exposes no
-lock state over IPC. `trust.session_locked` therefore detects the
-locker PROCESS, since the protocol returns the session the instant that
-client exits, and the input-delivering tools (`keyboard`, `click_ui`,
+they appear in neither `clients` nor `layers`. Hyprland reports the lock
+itself (`hyprctl -j locked`, 0.41+), so `trust.session_locked` asks the
+compositor. That also catches a lock built into the shell (Omarchy 4
+locks from its Quickshell shell, with no locker process to find) and a
+crashed locker, which the protocol leaves locked rather than handing the
+session back. A scan of /proc for a known locker process names it in the
+refusal, and decides alone only when the compositor cannot be asked.
+The input-delivering tools (`keyboard`, `click_ui`,
 and `pointer`'s click/drag/scroll; a bare `pointer` move only shifts the
 cursor) refuse while it is up unless `allow_auth` says a human wants the
 agent driving the prompt. The guards are the confinement

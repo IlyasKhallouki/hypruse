@@ -10,12 +10,12 @@ No ydotool daemon. No root. No portals. No X11.
 
 ## Why
 
-Computer use exists on macOS and Windows. On Linux there is effectively nothing: the Claude Desktop Linux beta explicitly ships **without** screen control, Anthropic's reference implementation is an X11 container, and the existing Wayland attempts lean on setuid uinput hacks or GNOME-only portals.
+Computer use exists on macOS and Windows, and the vendors' Linux apps still ship **without** it: Claude Desktop's Linux docs say computer use is not available there, and ChatGPT's computer use covers macOS and Windows only. Anthropic's reference implementation is an X11 container. Other Wayland tools lean on ydotool and uinput, on GNOME-only portals, or on a compositor plugin built for one exact Hyprland version.
 
 Meanwhile Hyprland already exposes everything an agent needs, better than any accessibility bridge: a complete IPC surface for state and window management, and first-class Wayland protocols for input. hypruse just wires them to MCP:
 
 - **Semantic first.** `desktop` returns the real window/workspace tree (addresses, classes, titles, geometry) in one call. The agent switches workspaces and focuses windows the way you do (instantly, over IPC), not by squinting at pixels.
-- **Vision when it matters.** Screenshots of a monitor, an exact window crop, or a zoomed region, with the geometry/scale metadata to map any pixel back to a clickable coordinate: a coarse-to-fine loop [grounded in the GUI-agents research](#research).
+- **Vision when it matters.** Screenshots of a monitor, one window (captured as itself, even on a hidden workspace or under another window), or a zoomed region, with the geometry/scale metadata to map any pixel back to a clickable coordinate: a coarse-to-fine loop [grounded in the GUI-agents research](#research).
 - **Native input.** Clicks and scrolls are spoken directly over the Wayland wire (`zwlr_virtual_pointer_v1`); typing goes through `wtype`'s virtual keyboard with a proper XKB keymap, unicode-safe on any layout.
 
 ## How it works
@@ -27,7 +27,7 @@ agent (Claude Code, or any MCP client)
 hypruse
    ├── hyprctl -j ········▶ desktop state: monitors, workspaces, windows, layers
    ├── hyprctl dispatch ··▶ focus / move / close / launch / movecursor
-   ├── grim ··············▶ screenshots: monitor, window crop, region
+   ├── grim ··············▶ screenshots: monitor, window, region
    ├── busctl (AT-SPI) ···▶ accessibility tree: named controls, current
    │                        values, exact coords (ui / marks / click_ui)
    ├── wtype ·············▶ keyboard (zwp_virtual_keyboard_v1, real XKB keymap)
@@ -48,7 +48,7 @@ Design decisions:
 | tool | what it does |
 |---|---|
 | `desktop` | One-call semantic snapshot: monitors, workspaces, windows (address/class/title/geometry), active window, cursor, and layer surfaces (launchers, bars, notification popups) with a best-effort kind and geometry. A listed layer is one the compositor tracks, not one you can see: transparent and dormant surfaces are reported too, so screenshot when visibility matters |
-| `screenshot` | Focused monitor, exact window crop by address, or `x,y,WxH` region; returns image + coordinate-mapping metadata; fast JPEG by default (`lossless=true` for PNG); `stable=true` waits for the frame to settle |
+| `screenshot` | Focused monitor, one window by address (even hidden or covered; metadata `visible` says if it is on screen), or `x,y,WxH` region; returns image + coordinate-mapping metadata; fast JPEG by default (`lossless=true` for PNG); `stable=true` waits for the frame to settle |
 | `zoom` | Native-resolution re-capture around an estimated point (optionally clamped to a window): the precision step before clicking small controls, same metadata contract |
 | `ui` | Read a window's accessibility tree (AT-SPI, GTK/Qt apps that expose one) and return clickable elements by name with exact global coordinates, no screenshot; reports current values too (typed text, slider position, checkbox state); falls back to vision when an app exposes nothing |
 | `marks` | Set-of-Marks capture: the window screenshot with every accessible control drawn as a numbered mark, plus a JSON legend (role, name, current value, exact click point per number); needs ImageMagick for the drawing, degrades to the legend alone without it |
@@ -85,7 +85,7 @@ When an app exposes an accessibility tree (most GTK and Qt apps), you can target
 
 ### 3. Vision when it matters: the zoom loop
 
-For everything the accessibility tree cannot name, `screenshot` (monitor, window crop, or region) and `zoom` (a native-resolution re-capture around a point) carry a strict coordinate contract, `global = geometry + pixel / scale`, that stays exact on every monitor and fractional scale.
+For everything the accessibility tree cannot name, `screenshot` (monitor, window, or region) and `zoom` (a native-resolution re-capture around a point) carry a strict coordinate contract, `global = geometry + pixel / scale`, that stays exact on every monitor and fractional scale.
 
 **Use it well:** don't guess a small control from a full-screen image. Work coarse-to-fine: screenshot the window, estimate the target, `zoom` there, re-estimate on the sharp crop, then click. This two-step loop is the [research-backed](#research) way to hit small targets.
 
@@ -195,14 +195,14 @@ Read this section before installing. **hypruse hands an agent your mouse, your k
 4. **The seat is shared.** There is one cursor and one keyboard focus, and Hyprland's focus-follows-mouse means a cursor move alone can retarget keystrokes. Don't type while an agent is driving; watch the indicator.
 5. **Scope:** stdio only (no network listener), nothing persisted except the beacon and the capped screenshot cache in `$XDG_RUNTIME_DIR` (tmpfs, newest 20) and, if you turn it on, the [action journal](#the-record-journal-dry-run-replay) on disk under `$XDG_STATE_HOME` (rotated, one generation, and text-redacted by default). No clipboard access unless you opt in: `HYPRUSE_CLIPBOARD=1` registers a `clipboard` tool (never in read-only mode); clipboards hold passwords, so leave it off unless a workflow needs it. A screenshot sees everything visible: treat an agent session like screen sharing.
 6. **What the agent reads is untrusted.** Window titles, accessibility names and values, and clipboard text flow verbatim into the agent's context, and any web page, filename, or document can put instructions there (prompt injection). hypruse cannot sanitize meaning, so the approval layer is the backstop: keep consequential tools (`launch`, `keyboard`, `clipboard`) on ask-first when the agent will look at untrusted windows, and treat "the screen told me to" as attacker input when reviewing an approval prompt.
-7. **Input never lands where it silently would not work.** Three always-on checks (no env flag) refuse or annotate rather than report a phantom success: a click aimed under a launcher or on-screen keyboard layer surface (which sits above windows and would swallow it), typing while a launcher holds the keyboard grab, and any input while the session is **locked** (a live `hyprlock`/`swaylock` process, which is an `ext-session-lock` client invisible to the window and layer lists). While locked, `keyboard`/`click_ui`/`pointer` refuse unless `allow_auth=true` says a human wants the agent driving the unlock prompt. These are truthfulness aids, not a sandbox: they fail open on an unreadable system state, so they harden the common case without being a boundary you can lean on.
+7. **Input never lands where it silently would not work.** Three always-on checks (no env flag) refuse or annotate rather than report a phantom success: a click aimed under a launcher or on-screen keyboard layer surface (which sits above windows and would swallow it), typing while a launcher holds the keyboard grab, and any input while the session is **locked**. A lock screen is an `ext-session-lock` client, invisible to the window and layer lists, so hypruse asks Hyprland itself (`hyprctl locked`), which covers hyprlock, swaylock, Omarchy's built-in lock, and a locker that crashed and left the session locked. While locked, `keyboard`/`click_ui`/`pointer` refuse unless `allow_auth=true` says a human wants the agent driving the unlock prompt. These are truthfulness aids, not a sandbox: they fail open on an unreadable system state, so they harden the common case without being a boundary you can lean on.
 
 ### Optional confinement
 
 Six opt-in env flags. The first four narrow what an agent can touch, and each fails toward *less* action; the last two record and rehearse rather than restrict. All compose with the layers above:
 
 - **`HYPRUSE_CONFINE`** restricts input to a scope of windows: `launched` (only windows hypruse itself opened this session), `class:firefox,kitty`, or `workspace:3,special:notes`. Keyboard, `click_ui`, and `hypr` window ops are refused outside the scope; a `pointer` click is refused when any window under the point is out of scope (Hyprland's window list is not z-ordered, so hypruse fails closed rather than guess which window is on top). This is what lets you leave an agent working while your password manager sits on another workspace, untouchable. `use_bind` is refused outright while confinement is set, because a keybind runs an arbitrary compositor action that cannot be scoped to a window.
-- **`HYPRUSE_AUTH_GUARD`** (default **on**) refuses to click or type into a system authentication dialog (polkit agents, the GNOME keyring prompt), so a manipulated agent cannot approve a privilege escalation. Set `HYPRUSE_AUTH_GUARD=strict` to also refuse typing into a password field inside an ordinary window (a browser login), detected via the accessibility tree. A per-call `allow_auth=true` on `pointer`/`keyboard`/`click_ui` overrides it, and because it changes the tool's arguments the override surfaces distinctly in the approval prompt. `HYPRUSE_AUTH_GUARD=0` disables it.
+- **`HYPRUSE_AUTH_GUARD`** (default **on**) refuses to click or type into a system authentication dialog (polkit agents, whether a window like hyprpolkitagent or a prompt the shell draws as a layer, like Omarchy 4's; the GNOME keyring prompt), so a manipulated agent cannot approve a privilege escalation. Set `HYPRUSE_AUTH_GUARD=strict` to also refuse typing into a password field inside an ordinary window (a browser login), detected via the accessibility tree. A per-call `allow_auth=true` on `pointer`/`keyboard`/`click_ui` overrides it, and because it changes the tool's arguments the override surfaces distinctly in the approval prompt. `HYPRUSE_AUTH_GUARD=0` disables it.
 - **`HYPRUSE_STRICT`** refuses to act when the cursor or focused window moved since hypruse's last action (the human, or a popup, took the seat): the agent must re-read `desktop`/`screenshot` and retry, so it never types into a window you just switched to.
 - **`HYPRUSE_MARK`** makes the agent's presence legible on the desktop: it tags every window the agent opens `hypruse-owned` and flashes an on-screen notice when the agent opens a window or captures the screen. It also installs a `border_color` window rule on that tag so owned windows get a colored outline, but whether a *runtime* rule renders depends on your Hyprland version and config precedence (on some setups it does not take effect); when it cannot be installed at all, hypruse says so on stderr rather than leaving you with a marking layer that is quietly not running. For a guaranteed outline, add the rule to your own config, which hypruse's tagging then matches: `windowrule = border_color rgb(ff5555), tag hypruse-owned` in `hyprland.conf` (older Hyprland: `tag:hypruse-owned`), or `hl.window_rule({ match = { tag = "hypruse-owned" }, border_color = "rgb(ff5555)" })` in `hyprland.lua`.
 - **`HYPRUSE_JOURNAL`** records what the agent did: one NDJSON line per tool call in `$XDG_STATE_HOME/hypruse/journal.ndjson` (`HYPRUSE_JOURNAL=1`), or a path of your own. Read it with `hypruse journal`, re-run it with `hypruse replay`. See [The record](#the-record-journal-dry-run-replay) below.
@@ -332,6 +332,7 @@ Grounded in measured hot-path latencies and the finding that LLM calls are 76 to
 | hyprmcp | hyprctl wrapper | window management only; no screenshots or input |
 | wayland-mcp | evemu input, VLM analysis | requires elevated setup for input; no Hyprland semantics |
 | Anthropic computer-use-demo | X11 + xdotool in Docker | a sandboxed reference environment rather than a live desktop |
+| Cua (cua-driver) | cross-platform driver; an optional Hyprland compositor plugin gives the agent its own input seats | the plugin must be built for the exact installed Hyprland version, and its README calls it experimental and unreleased |
 
 ## Research
 
@@ -356,8 +357,3 @@ Where an app exposes an accessibility tree, hypruse also reads it (the `ui` tool
 ## License
 
 [MIT](LICENSE)
-
-
-
-
-[![MCP Badge](https://lobehub.com/badge/mcp-full/ilyaskhallouki-hypruse)](https://lobehub.com/mcp/ilyaskhallouki-hypruse)
