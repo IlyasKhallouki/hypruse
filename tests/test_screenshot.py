@@ -251,3 +251,22 @@ def test_window_capture_is_refused_while_the_session_is_locked(monkeypatch):
     assert calls == []
     _, meta = screenshot.capture()  # the monitor shows the lock screen itself
     assert meta["target"] == "monitor"
+
+
+# Hyprland marks a window on a hidden workspace suspended, and many apps
+# (kitty, ghostty) stop drawing while suspended: grim -T then returns the
+# last frame the app drew, which can be minutes old.
+def test_hidden_capture_warns_the_content_may_be_stale(monkeypatch):
+    _desktop(monkeypatch)
+    _, meta = screenshot.capture(window="0xb")
+    assert "last looked" in meta["note"]
+    _, shown = screenshot.capture(window="0xa")
+    assert "note" not in shown
+
+
+def test_stable_is_not_claimed_for_a_hidden_window(monkeypatch):
+    # a frozen frame always matches itself, so "stable" would vouch for it
+    calls = _desktop(monkeypatch)
+    _, meta = screenshot.capture_stable(window="0xb", interval=0, timeout=0.05)
+    assert meta["stable"] is None
+    assert len(calls) == 1  # no settle loop

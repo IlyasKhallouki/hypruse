@@ -379,6 +379,13 @@ def capture(
             ", after focusing the window (hypr action='focus_window'): it is not on "
             "screen, so a click there now lands on another window"
         )
+        # Hyprland marks a window on a hidden workspace suspended, and many
+        # apps (kitty, ghostty) stop drawing while suspended
+        meta["note"] = (
+            "not on screen: many apps stop drawing while hidden, so this may "
+            "show the window as it last looked, not as it is now. Focus it and "
+            "capture again for a current view."
+        )
     return data, meta
 
 
@@ -398,8 +405,15 @@ def capture_stable(
     frame with False when the content never settles within `timeout`
     (blinking cursors, video). The byte-compare relies on the encoder being
     deterministic: both grim JPEG and PNG map identical pixels to identical
-    bytes, so the default JPEG format is safe here."""
+    bytes, so the default JPEG format is safe here.
+
+    A window that is not on screen gets stable = None after one capture:
+    an app that stopped drawing while hidden yields a frozen frame that
+    always matches itself, so a match would vouch for stale content."""
     data, meta = capture(window, region, scale, max_bytes, max_edge, lossless)
+    if meta.get("visible") is False:
+        meta["stable"] = None
+        return data, meta
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
         time.sleep(interval)
