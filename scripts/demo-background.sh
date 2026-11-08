@@ -50,6 +50,8 @@ printf '\n'
 
 recpid=
 if [ "$REC" = 1 ]; then
+  clear
+  printf '\033[1mThe agent books a trip in a form on workspace 99, out of sight.\033[0m\n'
   wf-recorder -y -o "$monitor" -f "$OUT/raw.mp4" >/dev/null 2>&1 &
   recpid=$!
   sleep 1.5
@@ -81,10 +83,17 @@ fi
 "${H[@]}" hypr close_window "$addr" >/dev/null 2>&1 || true
 
 if [ "$REC" = 1 ]; then
-  # trim the countdown's tail and keep it short and readable at README width
-  ffmpeg -loglevel error -y -i "$OUT/raw.mp4" -vf "scale=1280:-2" -c:v libx264 \
+  # end on a close-up of the form (yad opens in the middle of the screen),
+  # so the filled field and ticked boxes are readable at README width
+  last=$(ffprobe -v error -show_entries format=duration -of csv=p=0 "$OUT/raw.mp4")
+  ffmpeg -loglevel error -y -ss "$(echo "$last - 1.6" | bc)" -i "$OUT/raw.mp4" -frames:v 1 \
+    -vf "crop=iw/4:ih/4:iw*3/8:ih*0.385,scale=1920:1080:flags=lanczos" "$OUT/zoom.png"
+  ffmpeg -loglevel error -y -i "$OUT/raw.mp4" -loop 1 -t 2.5 -framerate 30 -i "$OUT/zoom.png" \
+    -filter_complex "[0:v]fps=30,scale=1920:1080,setsar=1,format=yuv420p[a];[1:v]fps=30,scale=1920:1080,setsar=1,format=yuv420p[b];[a][b]concat=n=2:v=1[v]" \
+    -map "[v]" -c:v libx264 -crf 20 -pix_fmt yuv420p "$OUT/full.mp4"
+  ffmpeg -loglevel error -y -i "$OUT/full.mp4" -vf "scale=1280:-2" -c:v libx264 \
     -pix_fmt yuv420p -crf 23 -movflags +faststart "$OUT/demo.mp4"
-  ffmpeg -loglevel error -y -i "$OUT/raw.mp4" -vf \
+  ffmpeg -loglevel error -y -i "$OUT/full.mp4" -vf \
     "fps=10,scale=1100:-1:flags=lanczos,split[a][b];[a]palettegen=max_colors=128[p];[b][p]paletteuse=dither=bayer" \
     "$OUT/demo.gif"
   printf '\nwrote %s/demo.mp4 and %s/demo.gif (%s)\n' "$OUT" "$OUT" "$(du -h "$OUT/demo.gif" | cut -f1)"
