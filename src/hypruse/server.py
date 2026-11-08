@@ -11,12 +11,14 @@ from __future__ import annotations
 
 import base64
 import contextlib
+import functools
 import json
 import os
 import re
 import shutil
 import subprocess
 import sys
+import threading
 import time
 from collections.abc import Callable
 from pathlib import Path
@@ -2497,21 +2499,45 @@ _TITLES = {
 }
 
 
+# One tool call at a time. mcp 1 ran a plain function tool on the event loop,
+# so calls never overlapped; mcp 2 runs each on a worker thread, and two at
+# once would share the held keys, the seat baseline and the journal.
+_TOOL_LOCK = threading.Lock()
+
+
+def _one_at_a_time(fn: Callable[..., Any]) -> Callable[..., Any]:
+    @functools.wraps(fn)  # the SDK reads the signature and docstring through this
+    def call(*args: Any, **kwargs: Any) -> Any:
+        with _TOOL_LOCK:
+            return fn(*args, **kwargs)
+    return call
+
+
+def _server(**kwargs: Any) -> Any:
+    """The SDK's server class: MCPServer in mcp 2, FastMCP in mcp 1 (where
+    the server reports the SDK's version, as it takes no version of its own)."""
+    try:
+        from mcp.server.mcpserver import MCPServer
+    except ImportError:
+        from mcp.server.fastmcp import FastMCP
+        return FastMCP("hypruse", **kwargs)
+    return MCPServer("hypruse", version=__version__, **kwargs)
+
+
 def build_app() -> Any:
-    """The FastMCP application with the tools registered for this mode.
+    """The MCP application with the tools registered for this mode.
     Observation tools are annotated read-only and closed-world (they read
     the local desktop and change nothing); acting tools are annotated
     destructive, since a click or a keypress can do anything the user
     could."""
-    from mcp.server.fastmcp import FastMCP
     from mcp.types import ToolAnnotations
 
-    app_ = FastMCP("hypruse", instructions=_instructions)
+    app_ = _server(instructions=_instructions)
     for observe_tool in _OBSERVE_TOOLS:
         name = observe_tool.__name__
         app_.tool(annotations=ToolAnnotations(
             title=_TITLES[name], readOnlyHint=True, openWorldHint=False
-        ))(observe_tool)
+        ))(_one_at_a_time(observe_tool))
     if not READONLY:
         acting = [pointer, keyboard, click_ui, hypr, launch, use_bind, sequence]
         if CLIPBOARD:
@@ -2520,7 +2546,7 @@ def build_app() -> Any:
             name = acting_tool.__name__
             app_.tool(annotations=ToolAnnotations(
                 title=_TITLES[name], readOnlyHint=False, destructiveHint=True
-            ))(acting_tool)
+            ))(_one_at_a_time(acting_tool))
     return app_
 
 

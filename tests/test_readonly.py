@@ -129,12 +129,13 @@ def test_every_tool_declares_a_title_and_whether_it_acts(reloaded, monkeypatch):
     tools = asyncio.run(reloaded(None).mcp.list_tools())
     assert {t.name for t in tools} == OBSERVE | ACT | {"clipboard"}
     for t in tools:
-        a = t.annotations
-        assert a is not None and a.title, t.name
+        assert t.annotations is not None, t.name
+        a = t.annotations.model_dump(by_alias=True)  # the wire names, in mcp 1 and 2
+        assert a["title"], t.name
         if t.name in OBSERVE:
-            assert a.readOnlyHint is True and a.openWorldHint is False, t.name
+            assert a["readOnlyHint"] is True and a["openWorldHint"] is False, t.name
         else:
-            assert a.readOnlyHint is False and a.destructiveHint is True, t.name
+            assert a["readOnlyHint"] is False and a["destructiveHint"] is True, t.name
 
 
 def test_the_acting_tools_explain_background_mode(reloaded, monkeypatch):
@@ -153,3 +154,31 @@ def test_the_instructions_follow_the_background_setting(reloaded, monkeypatch):
     assert "off for this session" in reloaded(None).mcp.instructions
     monkeypatch.setenv("HYPRUSE_BACKGROUND", "1")
     assert "GUARANTEED" not in reloaded("1").mcp.instructions  # read-only acts on nothing
+
+
+def test_tool_calls_run_one_at_a_time(reloaded):
+    # mcp 2 runs each plain tool call on its own worker thread; hypruse's
+    # tools share held keys, the seat baseline and the journal, so the
+    # registered tools must not overlap even when calls arrive together
+    import inspect
+    import threading
+    import time
+
+    module = reloaded(None)
+    inside, overlaps = [0], []
+
+    def tool(x: int = 0) -> int:
+        inside[0] += 1
+        overlaps.append(inside[0])
+        time.sleep(0.02)
+        inside[0] -= 1
+        return x
+
+    wrapped = module._one_at_a_time(tool)
+    assert inspect.signature(wrapped) == inspect.signature(tool)  # the schema source
+    threads = [threading.Thread(target=wrapped, args=(i,)) for i in range(8)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+    assert max(overlaps) == 1

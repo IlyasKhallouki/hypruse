@@ -15,7 +15,9 @@ src/hypruse/
   skill.py       the packaged Agent Skill (skills/hypruse) and its install
                  into each agent's skills directory
   server.py      the tools (clipboard is opt-in), docstrings = the
-                 agent-facing API; the FastMCP app is built on first use
+                 agent-facing API; the MCP app (mcp 2's MCPServer, or
+                 FastMCP on mcp 1) is built on first use, and its tools
+                 run one call at a time
   hyprctl.py     all Hyprland IPC (queries + dispatchers), the config-manager
                  probe and the Lua dialect, state trimming, keybind decoding,
                  sendshortcut and the active keyboard layout
@@ -57,8 +59,8 @@ The MCP server and the shell verbs call the same module-level functions in
 What differs is transport. A tool returns either a string or a list of
 content blocks, and it asks for those blocks through `_text()`/`_image()`
 rather than naming `mcp.types`: the MCP path gets the pydantic objects
-FastMCP expects, the CLI path (`use_plain_blocks()`) gets a plain `Block`
-with the same fields. That, plus building the FastMCP app on first access
+the SDK expects, the CLI path (`use_plain_blocks()`) gets a plain `Block`
+with the same fields. That, plus building the MCP app on first access
 (`app()`, reachable as `server.mcp`) instead of at import, is what keeps a
 verb's startup at a few hundred milliseconds: importing the MCP stack costs about two seconds
 of pydantic model building, which a process that only prints text and file

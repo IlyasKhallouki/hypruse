@@ -42,6 +42,12 @@ needs_hyprland = pytest.mark.skipif(
 PNG_MAGIC = b"\x89PNG\r\n\x1a\n"
 
 
+def wire(obj, field: str):
+    """A field by its wire name: mcp 1 spells the attribute that way, mcp 2
+    in snake case."""
+    return obj.model_dump(by_alias=True)[field]
+
+
 def call(tool: str, args: dict, mode: str):
     async def go():
         params = StdioServerParameters(
@@ -59,7 +65,7 @@ def call(tool: str, args: dict, mode: str):
 @needs_hyprland
 def test_desktop_roundtrip():
     result = call("desktop", {}, "file")
-    assert not result.isError
+    assert not wire(result, "isError")
     text = next(c.text for c in result.content if isinstance(c, TextContent))
     state = json.loads(text)
     assert state["monitors"]
@@ -72,7 +78,7 @@ JPEG_MAGIC = b"\xff\xd8\xff"
 def test_screenshot_roundtrip_file_mode():
     # default is fast JPEG
     result = call("screenshot", {}, "file")
-    assert not result.isError, result.content
+    assert not wire(result, "isError"), result.content
     texts = [c.text for c in result.content if isinstance(c, TextContent)]
     assert any("screenshot saved" in t for t in texts)
     path = texts[0].split()[-1]  # path is the final token, nothing after it
@@ -84,7 +90,7 @@ def test_screenshot_roundtrip_file_mode():
 def test_screenshot_roundtrip_lossless_file_mode():
     # lossless=true opts back into PNG
     result = call("screenshot", {"lossless": True}, "file")
-    assert not result.isError, result.content
+    assert not wire(result, "isError"), result.content
     texts = [c.text for c in result.content if isinstance(c, TextContent)]
     path = texts[0].split()[-1]
     with open(path, "rb") as f:
@@ -94,11 +100,11 @@ def test_screenshot_roundtrip_lossless_file_mode():
 @needs_hyprland
 def test_screenshot_roundtrip_image_mode():
     result = call("screenshot", {}, "image")
-    assert not result.isError, result.content
+    assert not wire(result, "isError"), result.content
     images = [c for c in result.content if isinstance(c, ImageContent)]
     assert images, f"no ImageContent in {[type(c).__name__ for c in result.content]}"
     raw = base64.b64decode(images[0].data)
-    assert images[0].mimeType in ("image/png", "image/jpeg")
+    assert wire(images[0], "mimeType") in ("image/png", "image/jpeg")
     assert raw[:8] == PNG_MAGIC or raw[:3] == JPEG_MAGIC
     assert len(raw) <= 700_000, "image mode must respect the transport budget"
     metas = [c.text for c in result.content if isinstance(c, TextContent)]
@@ -108,7 +114,7 @@ def test_screenshot_roundtrip_image_mode():
 @needs_hyprland
 def test_zoom_roundtrip_file_mode():
     result = call("zoom", {"x": 400, "y": 300}, "file")
-    assert not result.isError, result.content
+    assert not wire(result, "isError"), result.content
     texts = [c.text for c in result.content if isinstance(c, TextContent)]
     meta = json.loads(texts[-1])
     assert meta["target"] == "zoom"
@@ -158,7 +164,7 @@ def test_ui_roundtrip_reads_a11y_tree():
         elements = []
         for _ in range(20):
             result = call("ui", {"window": win["address"]}, "file")
-            assert not result.isError, result.content
+            assert not wire(result, "isError"), result.content
             texts = [c.text for c in result.content if isinstance(c, TextContent)]
             try:
                 elements = [json.loads(t) for t in texts]

@@ -19,3 +19,5 @@ jobs:
       - run: uv sync --group dev
       - run: uv run ruff check .
       - run: uv run pytest -q
+      # mcp 2 (Arch ships it): same suite against the newer SDK
+      - run: uv run --isolated --with "mcp>=2,<3" --group dev pytest -q

@@ -8,9 +8,26 @@ All notable changes to this project are documented here. The format follows
 
 ### Fixed
 
+- The MCP server starts with mcp 2. Arch moved `python-mcp` to 2.3.0 on
+  2026-10-27, and mcp 2 dropped the `mcp.server.fastmcp` module that 0.13.0
+  imports, so the AUR package crashed on start on an up-to-date Arch,
+  CachyOS or Omarchy system. hypruse now uses mcp 2's `MCPServer` and falls
+  back to `FastMCP` on mcp 1. Installs through `uvx` or pip were not
+  affected, because they pinned mcp below 2.
+- Tool calls still run one at a time under mcp 2, which runs each call on
+  its own thread. Two calls at once would have shared the held keys, the
+  seat baseline and the journal.
+- On mcp 2 the server reports hypruse's own version to clients, not the
+  SDK's.
 - `ui`, `marks` and `click_ui` report each control's role in apps built on
   AccessKit (egui, Bevy, Rune and others), which answer `GetRole` but not
   `GetRoleName`: the role is named from its number, as libatspi names it.
+
+### Packaging
+
+- Both AUR packages run a `check()` that builds the MCP server against the
+  installed `python-mcp`, so an SDK change like this one fails the build
+  instead of the first start. CI runs the test suite against mcp 2 as well.
 
 ## [0.13.0] - 2026-10-18
 
