@@ -23,6 +23,19 @@ All notable changes to this project are documented here. The format follows
   AccessKit (egui, Bevy, Rune and others), which answer `GetRole` but not
   `GetRoleName`: the role is named from its number, as libatspi names it.
 
+### Changed
+
+- `hypruse init` registers the installed `hypruse` when one is on `PATH`
+  (AUR, pipx, `uv tool install`) and falls back to `uvx hypruse` otherwise.
+  An MCP client started outside your shell may not find `uvx`, which on
+  Omarchy is a mise shim. `init` now also registers hypruse with Codex.
+- `hypruse doctor` checks the accessibility bus, and names any open
+  Chromium, Chrome, web app or Electron window that has no accessibility
+  tree, with the flags file to fix it in. A failed check now links to the
+  README's new Troubleshooting section, which did not exist before.
+- The README starts with a quick start and has new On Omarchy and
+  Troubleshooting sections.
+
 ### Packaging
 
 - Both AUR packages run a `check()` that builds the MCP server against the

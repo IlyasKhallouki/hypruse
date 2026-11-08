@@ -194,6 +194,12 @@ apps and Electron/Chrome started without `--force-renderer-accessibility`.
 Fall back to screenshot, zoom, pointer. For web pages prefer a browser tool
 if one is installed; hypruse is for the desktop around the browser.
 
+For Chromium, Chrome, their web apps and Obsidian, tell the user the fix
+rather than editing it yourself: add `--force-renderer-accessibility` on its
+own line to `~/.config/chromium-flags.conf` (or `chrome-flags.conf`,
+`brave-flags.conf`, `~/.config/obsidian/user-flags.conf`) and restart the
+app. `hypruse doctor` names the open windows that still have no tree.
+
 ## References
 
 - `references/verbs.md`: every verb, flag, output shape and exit code. Read

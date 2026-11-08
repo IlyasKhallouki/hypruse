@@ -1,4 +1,5 @@
 import json
+import subprocess
 import tomllib
 from pathlib import Path
 
@@ -47,7 +48,14 @@ def test_registry_ownership_token_matches_server_name():
     assert not rest[:1].isalnum() and rest[:1] not in ".-_/" or rest.startswith(("-->", "--!>"))
 
 
-def test_merge_adds_entry_preserving_others():
+@pytest.fixture
+def uvx_only(monkeypatch):
+    """No installed hypruse on PATH, so init falls back to uvx."""
+    real = cli.shutil.which
+    monkeypatch.setattr(cli.shutil, "which", lambda t: None if t == "hypruse" else real(t))
+
+
+def test_merge_adds_entry_preserving_others(uvx_only):
     cfg = {"mcpServers": {"platform": {"type": "http", "url": "https://x"}}, "other": 1}
     merged, changed = cli.merge_desktop_config(cfg)
     assert changed
@@ -69,7 +77,7 @@ def test_merge_from_empty():
     assert changed and "hypruse" in merged["mcpServers"]
 
 
-def test_desktop_init_backs_up_and_writes(tmp_path, monkeypatch):
+def test_desktop_init_backs_up_and_writes(tmp_path, monkeypatch, uvx_only):
     cfgfile = tmp_path / "claude_desktop_config.json"
     cfgfile.write_text(json.dumps({"mcpServers": {}}))
     monkeypatch.setattr(cli, "DESKTOP_CONFIG", cfgfile)
@@ -279,3 +287,82 @@ def test_doctor_does_not_vouch_for_window_ids_it_could_not_see(monkeypatch):
     monkeypatch.setattr(hyprctl_mod, "query", lambda what: [])
     ok, detail = cli._window_capture_note()
     assert ok is True and "no window" in detail
+
+
+def test_init_registers_the_installed_hypruse_when_there_is_one(monkeypatch, tmp_path):
+    # a client started outside a login shell may not find uvx (a mise shim
+    # on Omarchy), so an AUR or `uv tool install` copy is used directly
+    monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path / "cache"))
+    monkeypatch.delenv("UV_CACHE_DIR", raising=False)
+    monkeypatch.setattr(cli.shutil, "which", lambda t: "/usr/bin/hypruse")
+    assert cli.server_command() == ["/usr/bin/hypruse"]
+    assert cli.desktop_entry()["command"] == "/usr/bin/hypruse"
+    assert cli.desktop_entry()["args"] == []
+    assert "command: /usr/bin/hypruse" in cli.generic_snippet()
+
+
+def test_init_does_not_register_uvxs_temporary_copy(monkeypatch, tmp_path):
+    cache = tmp_path / "cache"
+    monkeypatch.setenv("XDG_CACHE_HOME", str(cache))
+    monkeypatch.delenv("UV_CACHE_DIR", raising=False)
+    temp = str(cache / "uv" / "archive-v0" / "abc" / "bin" / "hypruse")
+    monkeypatch.setattr(cli.shutil, "which", lambda t: temp)
+    assert cli.server_command() == ["uvx", "hypruse"]
+
+
+def test_codex_init_registers_once(monkeypatch, capsys):
+    runs = []
+
+    def run(cmd, **kw):
+        runs.append(cmd)
+        return subprocess.CompletedProcess(cmd, 1 if cmd[2] == "get" else 0, "", "")
+
+    monkeypatch.setattr(cli.shutil, "which", lambda t: f"/usr/bin/{t}")
+    monkeypatch.setattr(cli.subprocess, "run", run)
+    cli._init_codex(assume_yes=True)
+    assert runs[-1] == ["codex", "mcp", "add", "hypruse", "--", "/usr/bin/hypruse"]
+
+
+def test_codex_init_leaves_an_existing_entry_alone(monkeypatch, capsys):
+    runs = []
+
+    def run(cmd, **kw):
+        runs.append(cmd)
+        return subprocess.CompletedProcess(cmd, 0, "hypruse", "")
+
+    monkeypatch.setattr(cli.shutil, "which", lambda t: f"/usr/bin/{t}")
+    monkeypatch.setattr(cli.subprocess, "run", run)
+    cli._init_codex(assume_yes=True)
+    assert [c[2] for c in runs] == ["get"]
+    assert "already configured" in capsys.readouterr().out
+
+
+def test_doctor_fails_without_an_accessibility_bus(monkeypatch):
+    from hypruse import a11y
+
+    def no_bus():
+        raise a11y.A11yError("no at-spi bus")
+
+    monkeypatch.setattr(a11y, "connect", no_bus)
+    ok, detail = cli._check_accessibility()
+    assert not ok and "at-spi2-core" in detail
+
+
+def test_doctor_names_the_flag_for_a_browser_without_a_tree(monkeypatch):
+    from hypruse import a11y, hyprctl
+
+    class Bus:
+        def conn_pid(self, svc):
+            return {":1.1": 100}[svc]
+
+    monkeypatch.setattr(a11y, "connect", lambda: Bus())
+    monkeypatch.setattr(a11y, "apps", lambda bus: [(":1.1", "/root")])
+    monkeypatch.setattr(a11y, "same_app", lambda a, b: a == b)
+    monkeypatch.setattr(hyprctl, "query", lambda what: [
+        {"class": "org.gnome.Nautilus", "pid": 100},  # has a tree
+        {"class": "chromium", "pid": 200},  # no tree
+    ])
+    ok, detail = cli._check_accessibility()
+    assert ok, detail
+    assert "chromium" in detail and "~/.config/chromium-flags.conf" in detail
+    assert "--force-renderer-accessibility" in detail and "Nautilus" not in detail

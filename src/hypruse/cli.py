@@ -37,17 +37,35 @@ from typing import Any
 
 DESKTOP_CONFIG = Path.home() / ".config" / "Claude" / "claude_desktop_config.json"
 
-DESKTOP_ENTRY = {
-    "command": "uvx",
-    "args": ["hypruse"],
-    "env": {"HYPRUSE_SCREENSHOT_MODE": "image"},
-}
+README_TROUBLESHOOTING = "https://github.com/IlyasKhallouki/hypruse#troubleshooting"
 
-GENERIC_SNIPPET = """\
-For any other MCP client, add a stdio server:
-  command: uvx
-  args: [hypruse]
-"""
+
+def server_command() -> list[str]:
+    """The command an MCP client should run. An installed hypruse on PATH
+    (AUR, pipx, `uv tool install`) wins: a client started outside a login
+    shell may not find uvx, which on Omarchy is a mise shim. uvx's own
+    temporary copy (under uv's cache) does not count, since it is gone
+    after the run."""
+    found = shutil.which("hypruse")
+    cache = os.environ.get("UV_CACHE_DIR") or os.path.join(
+        os.environ.get("XDG_CACHE_HOME") or os.path.expanduser("~/.cache"), "uv")
+    if found and not os.path.realpath(found).startswith(os.path.realpath(cache) + os.sep):
+        return [found]
+    return ["uvx", "hypruse"]
+
+
+def desktop_entry() -> dict[str, Any]:
+    cmd = server_command()
+    return {"command": cmd[0], "args": cmd[1:], "env": {"HYPRUSE_SCREENSHOT_MODE": "image"}}
+
+
+def generic_snippet() -> str:
+    cmd = server_command()
+    return (
+        "For any other MCP client, add a stdio server:\n"
+        f"  command: {cmd[0]}\n"
+        f"  args: {json.dumps(cmd[1:])}\n"
+    )
 
 
 # --- doctor -----------------------------------------------------------------
@@ -140,6 +158,67 @@ def _window_capture_note() -> tuple[bool, str]:
     return True, "grim -T: a window screenshot is the window itself, even hidden or covered"
 
 
+# Chromium-family browsers and Electron apps build their accessibility tree
+# only when asked to; the flag file each one reads on Arch and Omarchy
+_FLAG_FILES = {
+    "chromium": "~/.config/chromium-flags.conf",
+    "google-chrome": "~/.config/chrome-flags.conf",
+    "brave-browser": "~/.config/brave-flags.conf",
+    "obsidian": "~/.config/obsidian/user-flags.conf",
+}
+_CHROMIUM_LIKE = ("chromium", "chrome", "brave", "vivaldi", "microsoft-edge", "obsidian",
+                  "code", "cursor", "discord", "slack", "signal", "spotify", "electron")
+
+
+def _check_accessibility() -> tuple[bool, str]:
+    """The AT-SPI bus that ui, marks, click_ui and background mode read.
+    Unreachable is a failure; an open Chromium or Electron window without a
+    tree is a note naming the flag that gives it one."""
+    from hypruse import a11y, hyprctl
+
+    try:
+        bus = a11y.connect()
+        roots = a11y.apps(bus)
+    except (a11y.A11yError, IndexError, TypeError) as exc:
+        return False, (
+            f"accessibility bus unreachable ({exc}); install at-spi2-core and log in again, "
+            "or ui/click_ui and background mode cannot work"
+        )
+    try:
+        clients = hyprctl.query("clients") or []
+    except Exception:
+        clients = []
+    conn_pids = [p for p in (bus.conn_pid(svc) for svc, _path in roots) if p]
+    blind = []
+    for c in clients:
+        cls = str(c.get("class") or "").lower()
+        pid = c.get("pid")
+        if not cls or not any(k in cls for k in _CHROMIUM_LIKE):
+            continue
+        if any(a11y.same_app(cp, pid) for cp in conn_pids):
+            continue
+        if cls not in blind:
+            blind.append(cls)
+    detail = f"accessibility bus reachable, {len(roots)} app(s) expose a tree"
+    if not blind:
+        return True, detail
+    # a web app's class is chrome-<id>-<profile>: its browser reads the flag
+    webapps = [c for c in blind if c.startswith("chrome-")]
+    named = [c for c in blind if c not in webapps]
+    if webapps:
+        named.append(f"{len(webapps)} web app(s)")
+    files = sorted({_FLAG_FILES[k] for c in blind for k in _FLAG_FILES
+                    if c == k or c.startswith(k)})
+    where = " or ".join(files) if files else "the app's command line"
+    if webapps and not any(f in files for f in (_FLAG_FILES["chromium"],
+                                                _FLAG_FILES["google-chrome"])):
+        where += " (a web app reads its browser's flags file)"
+    return True, (
+        f"{detail}; none from {', '.join(named)}, so click by name falls back to vision "
+        f"there. Add --force-renderer-accessibility to {where}, then restart the app"
+    )
+
+
 def _mode_note() -> tuple[bool, str]:
     parts = []
     if os.environ.get("HYPRUSE_READONLY", "").lower() in ("1", "true", "yes", "on"):
@@ -166,6 +245,7 @@ CHECKS = (
     ("pointer", _check_pointer),
     ("screenshot", _check_screenshot),
     ("window shots", _window_capture_note),
+    ("accessibility", _check_accessibility),
     ("mode", _mode_note),
     ("skill", _skill_note),
 )
@@ -179,10 +259,10 @@ def doctor() -> int:
         except Exception as exc:  # a check must never crash the report
             ok, detail = False, f"unexpected: {exc}"
         mark = "[ok]  " if ok else "[FAIL]"
-        print(f"{mark} {name:12s} {detail}")
+        print(f"{mark} {name:13s} {detail}")
         failures += 0 if ok else 1
     if failures:
-        print(f"\n{failures} check(s) failed. See README troubleshooting.")
+        print(f"\n{failures} check(s) failed. Fixes: {README_TROUBLESHOOTING}")
         return 1
     print("\nAll checks passed. hypruse is ready.")
     return 0
@@ -196,7 +276,7 @@ def merge_desktop_config(cfg: dict) -> tuple[dict, bool]:
     servers = cfg.setdefault("mcpServers", {})
     if "hypruse" in servers:
         return cfg, False
-    servers["hypruse"] = dict(DESKTOP_ENTRY)
+    servers["hypruse"] = desktop_entry()
     return cfg, True
 
 
@@ -214,8 +294,25 @@ def _init_claude_code(assume_yes: bool) -> None:
     if shutil.which("claude") is None:
         print("- Claude Code: not found on PATH, skipping")
         return
-    cmd = ["claude", "mcp", "add", "-s", "user", "hypruse", "--", "uvx", "hypruse"]
+    cmd = ["claude", "mcp", "add", "-s", "user", "hypruse", "--", *server_command()]
     if not _ask(f"- Claude Code found. Register hypruse? (runs: {' '.join(cmd)})", assume_yes):
+        return
+    proc = subprocess.run(cmd, capture_output=True, text=True)
+    out = (proc.stdout + proc.stderr).strip()
+    last_line = out.splitlines()[-1] if out else "ok"
+    print(f"  {'done' if proc.returncode == 0 else 'note'}: {last_line}")
+
+
+def _init_codex(assume_yes: bool) -> None:
+    if shutil.which("codex") is None:
+        print("- Codex: not found on PATH, skipping")
+        return
+    existing = subprocess.run(["codex", "mcp", "get", "hypruse"], capture_output=True, text=True)
+    if existing.returncode == 0:
+        print("- Codex: already configured, leaving as is")
+        return
+    cmd = ["codex", "mcp", "add", "hypruse", "--", *server_command()]
+    if not _ask(f"- Codex found. Register hypruse? (runs: {' '.join(cmd)})", assume_yes):
         return
     proc = subprocess.run(cmd, capture_output=True, text=True)
     out = (proc.stdout + proc.stderr).strip()
@@ -272,9 +369,10 @@ def _init_skill(assume_yes: bool, wanted: bool) -> None:
 def init(assume_yes: bool, install_skill: bool = False) -> int:
     print("hypruse init: registering with detected MCP clients\n")
     _init_claude_code(assume_yes)
+    _init_codex(assume_yes)
     _init_claude_desktop(assume_yes)
     _init_skill(assume_yes, install_skill)
-    print(f"\n{GENERIC_SNIPPET}")
+    print(f"\n{generic_snippet()}")
     print("Running doctor:\n")
     return doctor()
 

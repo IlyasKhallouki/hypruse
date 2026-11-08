@@ -2,11 +2,22 @@
 
 # hypruse
 
-**Computer use for [Hyprland](https://hypr.land).** An [MCP](https://modelcontextprotocol.io) server that gives AI agents native hands on your Wayland desktop: workspaces, windows, mouse, keyboard, screenshots.
-
-No ydotool daemon. No root. No portals. No X11.
+**Your AI agent works in apps on its own Hyprland workspaces while you keep working on yours.** hypruse is an [MCP](https://modelcontextprotocol.io) server, a set of shell verbs and an agent skill that give an agent the desktop you already have: the window tree, screenshots, clicks on controls by name, a mouse and a keyboard. It runs on stock [Hyprland](https://hypr.land) and on Omarchy, with no compositor plugin, no root, no portals, no ydotool daemon and no X11.
 
 ![Claude reading the desktop over IPC, switching to btop on another workspace, and reporting back](https://raw.githubusercontent.com/IlyasKhallouki/hypruse/main/assets/demo.gif)
+
+## Quick start
+
+```sh
+yay -S hypruse    # or: uv tool install hypruse
+hypruse init      # registers it with Claude Code, Codex or Claude Desktop (asks first), then runs doctor
+```
+
+Then ask your agent: *"Use hypruse to list the windows on each of my workspaces."* It answers from Hyprland's own window tree, without a screenshot. When you want it to work out of your sight, ask it to launch an app on its own workspace and do the job there: that is [Background mode](#background-mode).
+
+On Omarchy, everything hypruse needs is already installed; [On Omarchy](#on-omarchy) covers the one browser flag to set and a safe default for Omarchy's no-prompt agent launcher. If `doctor` reports a failure, [Troubleshooting](#troubleshooting) has the fix for each line. Before you hand an agent your seat, read the [Security model](#security-model).
+
+[Den](https://github.com/GlacierHubAB/den) builds its desktop control on hypruse, and [hyprvibe](https://github.com/ChrisLAS/hyprvibe) and the [NUR](https://github.com/nix-community/nur-combined) package it for NixOS.
 
 ## Why
 
@@ -18,6 +29,150 @@ Meanwhile Hyprland already exposes everything an agent needs, better than any ac
 - **Vision when it matters.** Screenshots of a monitor, one window (with grim 1.5+ on Hyprland 0.54+, captured as itself even on a hidden workspace or under another window, though a hidden app may show how it last looked), or a zoomed region, with the geometry/scale metadata to map any pixel back to a clickable coordinate: a coarse-to-fine loop [grounded in the GUI-agents research](#research).
 - **Native input.** Clicks and scrolls are spoken directly over the Wayland wire (`zwlr_virtual_pointer_v1`); typing goes through `wtype`'s virtual keyboard with a proper XKB keymap, unicode-safe on any layout.
 - **Works beside you.** The agent can work in apps on its own workspaces while you keep working on yours. It presses controls through the accessibility tree and types through it or with Hyprland's `sendshortcut`, so your cursor, keyboard focus and workspace stay where you left them. Stock Hyprland, no compositor plugin: see [Background mode](#background-mode).
+
+## Install
+
+Requirements: Hyprland (both config managers: `hyprland.conf` and the Lua `hyprland.lua` that 0.56 introduced), `grim` (grim 1.5+ on Hyprland 0.54+ lets a window screenshot capture the window itself, and `hypruse doctor` says whether yours can), `wtype` (most Hyprland setups already have both), and, for the `uvx` route, [uv](https://docs.astral.sh/uv/). The accessibility tools (`ui`/`marks`/`click_ui`) use `busctl`, which ships with systemd, to find the accessibility bus, then talk to it over one connection of their own. Optional: `wl-clipboard` for the opt-in clipboard tool, `imagemagick` for numbered `marks` captures.
+
+Arch Linux, from the [AUR](https://aur.archlinux.org/packages/hypruse):
+
+```sh
+yay -S hypruse        # or hypruse-git for main
+```
+
+Then let it set itself up and verify the environment:
+
+```sh
+hypruse init     # detects your MCP clients, registers (asks first), offers the agent skill, runs doctor
+hypruse doctor   # just the diagnostics
+```
+
+Manual registration, Claude Code:
+
+```sh
+claude mcp add -s user hypruse -- uvx hypruse
+```
+
+From a source checkout:
+
+```sh
+claude mcp add -s user hypruse -- uv run --directory /path/to/hypruse hypruse
+```
+
+Any other MCP client: run `uvx hypruse` as a stdio server. hypruse is also in
+the official [MCP registry](https://registry.modelcontextprotocol.io) as
+`io.github.IlyasKhallouki/hypruse`, so clients that browse the registry can
+install it from there.
+
+**Read-only mode:** set `HYPRUSE_READONLY=1` in the server config to expose only the observation tools (`desktop`, `screenshot`, `zoom`, `ui`, `marks`, `binds`, `wait_for`). The agent can see and narrate but cannot click, type, or launch. A good first week.
+
+### On Omarchy
+
+- grim, wtype, ImageMagick and wl-clipboard ship with Omarchy, and mise installs `uv` the first time you run it, so `yay -S hypruse` and `hypruse init` are all it takes. `init` registers the installed `hypruse` rather than `uvx`, because an MCP client started outside your shell may not find mise's `uvx` shim.
+- Chromium, Omarchy's web apps and Obsidian build an accessibility tree only when asked. Without one, `click_ui`, `ui` and background mode fall back to screenshots in them. Add `--force-renderer-accessibility` on its own line to `~/.config/chromium-flags.conf` (Chromium and its web apps) and to `~/.config/obsidian/user-flags.conf` (Obsidian), then restart the app. `hypruse doctor` names any open window that still has no tree.
+- Omarchy's agent launcher (`Super + Shift + Ctrl + A`, or `omarchy agent prompt`) starts agents in their no-approval modes, which removes the approval prompt the [Security model](#security-model) leans on. Start with `HYPRUSE_BACKGROUND=1`, which keeps hypruse's input on the agent's own workspaces, or `HYPRUSE_READONLY=1`, which lets it only look:
+
+  ```sh
+  claude mcp add -s user -e HYPRUSE_BACKGROUND=1 hypruse -- "$(command -v hypruse)"
+  ```
+
+- Omarchy 4 has no Waybar, so the [Waybar indicator](waybar/) does not apply. Bind the emergency stop to a free key in your Hyprland config instead, for example `bind = SUPER SHIFT, BackSpace, exec, hypruse stop`.
+- Omarchy keeps a separate Claude Code setup per agent account, and a server added with `claude mcp add` reaches only the account it was added in. Run `hypruse init` again in each account you use.
+
+### Troubleshooting
+
+`hypruse doctor` checks each part on its own. What to do about each line it can print:
+
+| doctor says | what to do |
+|---|---|
+| `[FAIL] dependencies missing: ...` | Install what it names, for example `sudo pacman -S grim wtype`. |
+| `[FAIL] session no Hyprland instance found` | Run hypruse inside your Hyprland session. A client in a VM, a container or another user's session cannot reach your compositor. |
+| `[FAIL] events` or `[FAIL] pointer` | The process found Hyprland but cannot reach its sockets or its Wayland display, which again means it is not running inside your session. |
+| `[FAIL] screenshot` | Run `grim /tmp/hypruse-test.png` by hand. What it prints is the cause. |
+| `[FAIL] accessibility bus unreachable` | Install `at-spi2-core` and log in again. Without it `ui`, `marks`, `click_ui` and background mode cannot work. |
+| `[ok] accessibility ... none from <app>` | That app has no accessibility tree yet. Add `--force-renderer-accessibility` to the flags file the line names and restart the app (see [On Omarchy](#on-omarchy)). |
+| `[ok] window shots grim has no -T` | Window screenshots crop the screen until you have grim 1.5+ on Hyprland 0.54+. Everything else works. |
+
+Problems `doctor` cannot see:
+
+- If the MCP server exits as soon as it starts on Arch, CachyOS or Omarchy, you are on hypruse 0.13.0 or older, which does not start with `python-mcp` 2. Arch has shipped mcp 2 since 2026-10-27. Upgrade to 0.13.1 or later.
+- If the client says `uvx: command not found`, it does not see your shell's `PATH`. Register the installed binary instead: `claude mcp add -s user hypruse -- "$(command -v hypruse)"`, or run `hypruse init` again.
+- If Claude Desktop shows no screenshots, set `HYPRUSE_SCREENSHOT_MODE=image` in its config, as below.
+
+### Claude Desktop (Linux beta)
+
+The Linux beta ships **without** Anthropic's first-party computer use, but stdio MCP servers work in chat, which makes hypruse the workaround. In `~/.config/Claude/claude_desktop_config.json`:
+
+```json
+{
+  "mcpServers": {
+    "hypruse": {
+      "command": "uvx",
+      "args": ["hypruse"],
+      "env": { "HYPRUSE_SCREENSHOT_MODE": "image" }
+    }
+  }
+}
+```
+
+Two Desktop-specific notes: use `image` mode (Desktop renders inline MCP images and has no file-read tool), and the app must run natively inside your Hyprland session so the server inherits `WAYLAND_DISPLAY`/`HYPRLAND_INSTANCE_SIGNATURE`; from a VM or container it cannot reach your compositor. If your Desktop install bypasses tool-approval prompts, treat the [Waybar indicator + panic keybind](waybar/) as mandatory, not optional.
+
+## Background mode
+
+An agent can work in apps on workspaces you are not looking at while you keep working on your own. On stock Hyprland, with no compositor plugin, hypruse does not move your cursor, take your keyboard focus or switch your workspace to do it. An app can still bring one of its own windows forward in response to something the agent did; when that changes your focused window, the result says so.
+
+It is on by default, in automatic mode. An action on the window you are in runs on your screen, as it always has. An action on any other window runs in the background:
+
+- `click_ui` presses the control through its accessibility action. A text field gets the app's own focus instead (except in GTK 4, which does not allow it). When no button, box or field matches the name, `click_ui` also takes a named element of another role that has an action, such as a row in a web app's list. Some of those actions only focus the element (Qt WebEngine's rows offer nothing else). The result then says it focused the element and whether the app reports it focused. That does not open the row: in testing, Enter sent to a focused Qt WebEngine row did not open it either.
+- `keyboard` with `window=` types into the window's focused text field (or its only one) through the accessibility interface. Otherwise it sends the keys to that window alone with Hyprland's `sendshortcut`, one key at a time on your keyboard layout. Newlines, tabs and backspaces are always sent as keys. Keys go to the control the app itself has focused, which is not necessarily the field text went into, so the agent focuses a field with `click_ui` before sending keys to it.
+- `launch` with no workspace opens the app on one of the agent's own workspaces, out of your sight.
+- The pointer is your real cursor, so it cannot work in the background. It is refused where its input would land on a window other than yours, and the refusal points the agent at `click_ui`.
+
+What the background cannot do is refused with the reason and what to do instead. `background=false` on a call (`--foreground` on the CLI) does it on your screen.
+
+### Settings
+
+The guarantee overrides everything. Without it, a call's own `background` argument wins over the automatic rule.
+
+| setting | what it does |
+|---|---|
+| `HYPRUSE_BACKGROUND=1` | The guarantee. The agent works only on windows on its own workspaces. The pointer, workspace switches, `focus_window`, `fullscreen`, `toggle_floating` with no target and `use_bind` are refused, `move_window` and `launch` take only the agent's workspaces (and none that is on screen), and `background=false` is refused too. |
+| `background=true` or `false` | Per call, on `click_ui`, `keyboard`, `pointer`, `launch` and `sequence` (CLI: `--background`, `--foreground`). `true` forces the background and refuses what cannot be done there; `false` asks for your screen. On `sequence` it reaches the pointer, keyboard and `click_ui` steps, and `true` also refuses a `hypr` step that would switch your workspace or focus. |
+| unset | Automatic, as above. |
+| `HYPRUSE_BACKGROUND=0` | Off: actions run on your screen as in 0.12, unless a call passes `background=true`. (`ui` still lists editable text fields and adds its notes; see the changelog.) |
+
+The guarantee bounds hypruse's own input. It cannot bound what a program does once `launch` starts it: the command runs as given, through a shell, so keep `launch` behind your client's approval prompt even with `HYPRUSE_BACKGROUND=1`.
+
+The agent's workspaces are `HYPRUSE_AGENT_WORKSPACES`, 99 down to 90 by default, at the far end of the numbers so they stay clear of the ones you use. `A-B` counts in either direction, and a comma list (`99,98,50`) or named workspaces (`name:research`) work too. `HYPRUSE_AGENT_FILL` (default 1) is how many of the agent's apps share one workspace before the next one is used. With 1, every app gets a workspace to itself, which keeps hidden windows at their full size. A workspace in the range that holds one of your windows is skipped, so yours and the agent's never mix, and so is one you are looking at. When the whole range is full the next app goes where the agent has the fewest. A window an earlier session opened counts as the agent's when `HYPRUSE_MARK` tagged it. With `HYPRUSE_CONFINE=workspace:...`, apps open only on agent workspaces inside that scope, and on yours as before when there is none.
+
+`launch` waits for its own window: one that opens on the workspace it asked for, or one of the launched program's own class. A window of another app that you open meanwhile is left alone; one of the same app can be taken for the launched one. An app that is already running (a browser, often) opens its new window from the running process, which ignores the workspace rule, so it appears on your screen and takes your focus until hypruse moves it; the result says so, and under the guarantee it carries a warning. Start a separate instance for the agent (for a browser, a separate profile) to avoid it.
+
+### What you get back
+
+Every background result says how it was done, whether your focused window and workspace were the same before and after, and, for a control that carries a value, what the accessibility tree read back:
+
+```
+pressed check box 'Agree' through its accessibility action (no pointer, the human's focus untouched) in yad; now: checked=true
+typed 12 characters into the text field in yad through the accessibility interface (the human's focus untouched); the field now holds the typed text (12 characters)
+sent ctrl+a to 0x5648592451c0 (yad) with sendshortcut, to the control the app has focused (the human's focus untouched)
+```
+
+A press on a check box or slider that the app ignored reads `no change seen`. A button press, a focused field or keys sent with `sendshortcut` carry no value to read back, so check their effect with `ui`. If your focused window changed during the action (because the app brought a window forward, or because you switched), the result ends with a `WARNING` naming the window that has focus now. Typed results never repeat the text, since the journal keeps every result line and typed text is only ever recorded as a length plus a digest. Screenshots are not used to confirm anything, because many apps stop drawing while hidden and a hidden window's pixels can be stale; `ui` shows its current state.
+
+### Limits
+
+- Only controls the accessibility tree exposes can be pressed in the background, and only with their primary action: a right or double click is refused there. Clicking an arbitrary point in a hidden window would need a compositor plugin or an input seat of its own, which this design avoids. Apps without a tree (terminals, canvas apps, Electron and Chrome without `--force-renderer-accessibility`) can still take keys.
+- The accessibility tree tells an app's windows apart by title or size. When neither tells the target from the app's other windows (a second window of a single-instance app with the same title and size, say), or the app's accessibility connection belongs to another process than its window, hypruse cannot be sure which window a control belongs to: `click_ui` refuses, `keyboard` sends keys, which Hyprland aims at the window itself, and `ui` says its controls may be another window's.
+- A hidden window's `ui` points are where its controls sit inside it, not on your screen, and the screen there shows your own windows. `ui` ends with a note saying so, because a `pointer` click at those points would land on whatever you are looking at.
+- A GTK 3 app brings its window forward when a field takes focus over the accessibility interface. With Hyprland's `misc:focus_on_activate` on, that would switch you to it, so focusing a GTK 3 field is refused then. A per-window `focus_on_activate` rule cannot be seen; the after-check reports it.
+- A character your keyboard layout has no key for (an emoji or CJK on most layouts) can only go in through the accessibility interface. A hidden GTK window does not report which of several text fields has its focus, so in a multi-field form such text is refused before any key is sent, and so is typing into a form with a password field among several, unless `allow_auth=true`.
+- For each key, `sendshortcut` moves keyboard focus to the target and back inside one compositor step, so your own typing cannot mix in. Your app does see its focus leave and come back, which most apps ignore; a few close an open menu.
+- `sendshortcut` is refused for XWayland windows, because Hyprland delivers the key to the focused window instead when both are XWayland.
+- With several keyboard layouts, `sendshortcut` works only while you are on the first one. Hyprland finds each key on the layout in use but the app reads it on the first, so on another layout different characters would arrive, and hypruse refuses instead. Text through the accessibility interface does not depend on the layout.
+- Web pages in the background need the browser bridge, which comes in a later release.
+- While the session is locked, background actions are refused like all other input.
+
+Every trust layer applies to the background paths: confinement checks the target window, the auth guard refuses a background press or key in an authentication dialog, and typing into a password field the accessibility tree shows needs `allow_auth=true` (an app with no tree cannot be checked, as in the foreground). You cannot see background work, so for anything unattended set `HYPRUSE_BACKGROUND=1`: input stays on the agent's workspaces, hypruse's own input never takes your screen (an app the agent launches can, and the result warns), the journal keeps every result with its method, and `HYPRUSE_MARK` tells you when the agent opens a window.
 
 ## How it works
 
@@ -104,63 +259,6 @@ hypruse hands an agent your real seat, so it ships the controls to bound what th
 
 **Use it well:** run read-only for the first week. When you trust a workflow, allowlist its tools and, if you want to walk away, confine the agent to a scope so it cannot click or type into your password manager on another workspace. Keep a panic bind handy (`hypruse stop`, or `pkill -f hypruse`). The [Security model](#security-model) has the full story.
 
-## Background mode
-
-An agent can work in apps on workspaces you are not looking at while you keep working on your own. On stock Hyprland, with no compositor plugin, hypruse does not move your cursor, take your keyboard focus or switch your workspace to do it. An app can still bring one of its own windows forward in response to something the agent did; when that changes your focused window, the result says so.
-
-It is on by default, in automatic mode. An action on the window you are in runs on your screen, as it always has. An action on any other window runs in the background:
-
-- `click_ui` presses the control through its accessibility action. A text field gets the app's own focus instead (except in GTK 4, which does not allow it). When no button, box or field matches the name, `click_ui` also takes a named element of another role that has an action, such as a row in a web app's list. Some of those actions only focus the element (Qt WebEngine's rows offer nothing else). The result then says it focused the element and whether the app reports it focused. That does not open the row: in testing, Enter sent to a focused Qt WebEngine row did not open it either.
-- `keyboard` with `window=` types into the window's focused text field (or its only one) through the accessibility interface. Otherwise it sends the keys to that window alone with Hyprland's `sendshortcut`, one key at a time on your keyboard layout. Newlines, tabs and backspaces are always sent as keys. Keys go to the control the app itself has focused, which is not necessarily the field text went into, so the agent focuses a field with `click_ui` before sending keys to it.
-- `launch` with no workspace opens the app on one of the agent's own workspaces, out of your sight.
-- The pointer is your real cursor, so it cannot work in the background. It is refused where its input would land on a window other than yours, and the refusal points the agent at `click_ui`.
-
-What the background cannot do is refused with the reason and what to do instead. `background=false` on a call (`--foreground` on the CLI) does it on your screen.
-
-### Settings
-
-The guarantee overrides everything. Without it, a call's own `background` argument wins over the automatic rule.
-
-| setting | what it does |
-|---|---|
-| `HYPRUSE_BACKGROUND=1` | The guarantee. The agent works only on windows on its own workspaces. The pointer, workspace switches, `focus_window`, `fullscreen`, `toggle_floating` with no target and `use_bind` are refused, `move_window` and `launch` take only the agent's workspaces (and none that is on screen), and `background=false` is refused too. |
-| `background=true` or `false` | Per call, on `click_ui`, `keyboard`, `pointer`, `launch` and `sequence` (CLI: `--background`, `--foreground`). `true` forces the background and refuses what cannot be done there; `false` asks for your screen. On `sequence` it reaches the pointer, keyboard and `click_ui` steps, and `true` also refuses a `hypr` step that would switch your workspace or focus. |
-| unset | Automatic, as above. |
-| `HYPRUSE_BACKGROUND=0` | Off: actions run on your screen as in 0.12, unless a call passes `background=true`. (`ui` still lists editable text fields and adds its notes; see the changelog.) |
-
-The guarantee bounds hypruse's own input. It cannot bound what a program does once `launch` starts it: the command runs as given, through a shell, so keep `launch` behind your client's approval prompt even with `HYPRUSE_BACKGROUND=1`.
-
-The agent's workspaces are `HYPRUSE_AGENT_WORKSPACES`, 99 down to 90 by default, at the far end of the numbers so they stay clear of the ones you use. `A-B` counts in either direction, and a comma list (`99,98,50`) or named workspaces (`name:research`) work too. `HYPRUSE_AGENT_FILL` (default 1) is how many of the agent's apps share one workspace before the next one is used. With 1, every app gets a workspace to itself, which keeps hidden windows at their full size. A workspace in the range that holds one of your windows is skipped, so yours and the agent's never mix, and so is one you are looking at. When the whole range is full the next app goes where the agent has the fewest. A window an earlier session opened counts as the agent's when `HYPRUSE_MARK` tagged it. With `HYPRUSE_CONFINE=workspace:...`, apps open only on agent workspaces inside that scope, and on yours as before when there is none.
-
-`launch` waits for its own window: one that opens on the workspace it asked for, or one of the launched program's own class. A window of another app that you open meanwhile is left alone; one of the same app can be taken for the launched one. An app that is already running (a browser, often) opens its new window from the running process, which ignores the workspace rule, so it appears on your screen and takes your focus until hypruse moves it; the result says so, and under the guarantee it carries a warning. Start a separate instance for the agent (for a browser, a separate profile) to avoid it.
-
-### What you get back
-
-Every background result says how it was done, whether your focused window and workspace were the same before and after, and, for a control that carries a value, what the accessibility tree read back:
-
-```
-pressed check box 'Agree' through its accessibility action (no pointer, the human's focus untouched) in yad; now: checked=true
-typed 12 characters into the text field in yad through the accessibility interface (the human's focus untouched); the field now holds the typed text (12 characters)
-sent ctrl+a to 0x5648592451c0 (yad) with sendshortcut, to the control the app has focused (the human's focus untouched)
-```
-
-A press on a check box or slider that the app ignored reads `no change seen`. A button press, a focused field or keys sent with `sendshortcut` carry no value to read back, so check their effect with `ui`. If your focused window changed during the action (because the app brought a window forward, or because you switched), the result ends with a `WARNING` naming the window that has focus now. Typed results never repeat the text, since the journal keeps every result line and typed text is only ever recorded as a length plus a digest. Screenshots are not used to confirm anything, because many apps stop drawing while hidden and a hidden window's pixels can be stale; `ui` shows its current state.
-
-### Limits
-
-- Only controls the accessibility tree exposes can be pressed in the background, and only with their primary action: a right or double click is refused there. Clicking an arbitrary point in a hidden window would need a compositor plugin or an input seat of its own, which this design avoids. Apps without a tree (terminals, canvas apps, Electron and Chrome without `--force-renderer-accessibility`) can still take keys.
-- The accessibility tree tells an app's windows apart by title or size. When neither tells the target from the app's other windows (a second window of a single-instance app with the same title and size, say), or the app's accessibility connection belongs to another process than its window, hypruse cannot be sure which window a control belongs to: `click_ui` refuses, `keyboard` sends keys, which Hyprland aims at the window itself, and `ui` says its controls may be another window's.
-- A hidden window's `ui` points are where its controls sit inside it, not on your screen, and the screen there shows your own windows. `ui` ends with a note saying so, because a `pointer` click at those points would land on whatever you are looking at.
-- A GTK 3 app brings its window forward when a field takes focus over the accessibility interface. With Hyprland's `misc:focus_on_activate` on, that would switch you to it, so focusing a GTK 3 field is refused then. A per-window `focus_on_activate` rule cannot be seen; the after-check reports it.
-- A character your keyboard layout has no key for (an emoji or CJK on most layouts) can only go in through the accessibility interface. A hidden GTK window does not report which of several text fields has its focus, so in a multi-field form such text is refused before any key is sent, and so is typing into a form with a password field among several, unless `allow_auth=true`.
-- For each key, `sendshortcut` moves keyboard focus to the target and back inside one compositor step, so your own typing cannot mix in. Your app does see its focus leave and come back, which most apps ignore; a few close an open menu.
-- `sendshortcut` is refused for XWayland windows, because Hyprland delivers the key to the focused window instead when both are XWayland.
-- With several keyboard layouts, `sendshortcut` works only while you are on the first one. Hyprland finds each key on the layout in use but the app reads it on the first, so on another layout different characters would arrive, and hypruse refuses instead. Text through the accessibility interface does not depend on the layout.
-- Web pages in the background need the browser bridge, which comes in a later release.
-- While the session is locked, background actions are refused like all other input.
-
-Every trust layer applies to the background paths: confinement checks the target window, the auth guard refuses a background press or key in an authentication dialog, and typing into a password field the accessibility tree shows needs `allow_auth=true` (an app with no tree cannot be checked, as in the foreground). You cannot see background work, so for anything unattended set `HYPRUSE_BACKGROUND=1`: input stays on the agent's workspaces, hypruse's own input never takes your screen (an app the agent launches can, and the result warns), the journal keeps every result with its method, and `HYPRUSE_MARK` tells you when the agent opens a window.
-
 ## Shell verbs and the agent skill
 
 Not every agent speaks MCP, and the ones that do increasingly prefer a command line: a tool list costs a few thousand tokens per session before the first call, a shell verb costs nothing until it runs. So the same fifteen tools are verbs, going through the same functions the MCP server registers, with the same trust guards, journal and activity beacon:
@@ -190,60 +288,6 @@ npx skills add IlyasKhallouki/hypruse -g
 ```
 
 `hypruse init` offers the same install. The skill pre-approves only the observation verbs, `doctor`, `--help` and reading the capture files; acting verbs stay behind your agent's own approval prompt, which is the boundary the [Security model](#security-model) leans on.
-
-## Install
-
-Requirements: Hyprland (both config managers: `hyprland.conf` and the Lua `hyprland.lua` that 0.56 introduced), `grim` (grim 1.5+ on Hyprland 0.54+ lets a window screenshot capture the window itself, and `hypruse doctor` says whether yours can), `wtype` (most Hyprland setups already have both), and [uv](https://docs.astral.sh/uv/). The accessibility tools (`ui`/`marks`/`click_ui`) use `busctl`, which ships with systemd, to find the accessibility bus, then talk to it over one connection of their own. Optional: `wl-clipboard` for the opt-in clipboard tool, `imagemagick` for numbered `marks` captures.
-
-Arch Linux, from the [AUR](https://aur.archlinux.org/packages/hypruse):
-
-```sh
-yay -S hypruse        # or hypruse-git for main
-```
-
-Then let it set itself up and verify the environment:
-
-```sh
-hypruse init     # detects your MCP clients, registers (asks first), offers the agent skill, runs doctor
-hypruse doctor   # just the diagnostics
-```
-
-Manual registration, Claude Code:
-
-```sh
-claude mcp add -s user hypruse -- uvx hypruse
-```
-
-From a source checkout:
-
-```sh
-claude mcp add -s user hypruse -- uv run --directory /path/to/hypruse hypruse
-```
-
-Any other MCP client: run `uvx hypruse` as a stdio server. hypruse is also in
-the official [MCP registry](https://registry.modelcontextprotocol.io) as
-`io.github.IlyasKhallouki/hypruse`, so clients that browse the registry can
-install it from there.
-
-**Read-only mode:** set `HYPRUSE_READONLY=1` in the server config to expose only the observation tools (`desktop`, `screenshot`, `zoom`, `ui`, `marks`, `binds`, `wait_for`). The agent can see and narrate but cannot click, type, or launch. A good first week.
-
-### Claude Desktop (Linux beta)
-
-The Linux beta ships **without** Anthropic's first-party computer use, but stdio MCP servers work in chat, which makes hypruse the workaround. In `~/.config/Claude/claude_desktop_config.json`:
-
-```json
-{
-  "mcpServers": {
-    "hypruse": {
-      "command": "uvx",
-      "args": ["hypruse"],
-      "env": { "HYPRUSE_SCREENSHOT_MODE": "image" }
-    }
-  }
-}
-```
-
-Two Desktop-specific notes: use `image` mode (Desktop renders inline MCP images and has no file-read tool), and the app must run natively inside your Hyprland session so the server inherits `WAYLAND_DISPLAY`/`HYPRLAND_INSTANCE_SIGNATURE`; from a VM or container it cannot reach your compositor. If your Desktop install bypasses tool-approval prompts, treat the [Waybar indicator + panic keybind](waybar/) as mandatory, not optional.
 
 ## Security model
 
@@ -396,11 +440,12 @@ Grounded in measured hot-path latencies and the finding that LLM calls are 76 to
 
 | project | approach | on Hyprland |
 |---|---|---|
-| computer-use-linux | AT-SPI + portals, ydotool fallback | GNOME-first; the RemoteDesktop portal it prefers is not implemented by xdg-desktop-portal-hyprland |
+| computer-use-linux | AT-SPI + portals, ydotool fallback | GNOME-first, and the RemoteDesktop portal it prefers is not implemented by xdg-desktop-portal-hyprland; since 2026-10-31 it has an opt-in Hyprland background mode (`COMPUTER_USE_LINUX_HYPRLAND_BACKGROUND=1`) whose typing refuses the whole call on a main keymap other than US ([#350](https://github.com/agent-sh/computer-use-linux/pull/350)) |
+| agent-desktop (Vercel) | computer use CLI for agents; AT-SPI on Linux | as of 2026-11-08, keys, display layout and window control refuse on Hyprland because the Linux adapter measures only Mutter's interfaces ([#386](https://github.com/vercel-labs/agent-desktop/issues/386)) |
 | hyprmcp | hyprctl wrapper | window management only; no screenshots or input |
 | wayland-mcp | evemu input, VLM analysis | requires elevated setup for input; no Hyprland semantics |
 | Anthropic computer-use-demo | X11 + xdotool in Docker | a sandboxed reference environment rather than a live desktop |
-| Cua (cua-driver) | cross-platform driver; an optional Hyprland compositor plugin gives the agent its own input seats | the plugin must be built for the exact installed Hyprland version, and its README calls it experimental and unreleased |
+| Cua (cua-driver) | cross-platform driver; an optional Hyprland compositor plugin gives the agent its own input seats | the plugin must be built for the exact installed Hyprland version, its README calls it experimental and unreleased, and as of 2026-11-08 it does not yet support Hyprland 0.57's input route ([#6232](https://github.com/trycua/cua/issues/6232)) |
 
 ## Research
 
