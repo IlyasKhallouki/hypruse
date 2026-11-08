@@ -6,6 +6,12 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Fixed
+
+- `ui`, `marks` and `click_ui` report each control's role in apps built on
+  AccessKit (egui, Bevy, Rune and others), which answer `GetRole` but not
+  `GetRoleName`: the role is named from its number, as libatspi names it.
+
 ## [0.13.0] - 2026-10-18
 
 Background mode: an agent works in apps on workspaces the human is not

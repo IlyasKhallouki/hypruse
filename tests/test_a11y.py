@@ -102,6 +102,8 @@ class FakeBus:
         if method == "GetRole":
             return [node["role"]]
         if method == "GetRoleName":
+            if node.get("role_name", "widget") is None:  # AccessKit lacks the method
+                raise a11y.CallRefused("GetRoleName failed: Unknown method")
             return [node.get("role_name", "widget")]
         if method == "GetExtents":
             return [list(node["extent"])] if node.get("extent") else [[0, 0, 0, 0]]
@@ -180,6 +182,14 @@ def test_find_actionable_only():
     assert [e["name"] for e in els] == ["Save", "Cancel"]  # label (role 29) excluded
     assert els[0]["extent"] == (10, 100, 80, 30)
     assert truncated is False
+
+
+def test_a_role_without_a_name_is_named_from_its_number():
+    bus, root = _tree()
+    bus.nodes[("app", "/save")].update(role=7, role_name=None)
+    els = {e["name"]: e for e in a11y.find_elements(bus, *root)[0]}
+    assert els["Save"]["role"] == "check box"
+    assert els["Cancel"]["role"] == "button"
 
 
 def test_clickable_reflects_states():

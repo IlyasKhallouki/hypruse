@@ -57,6 +57,34 @@ _LABEL_ROLE = 29
 
 PASSWORD_ROLE = 40  # AtspiRole PASSWORD_TEXT: never read, never type without consent
 
+# libatspi's names for the AtspiRole numbers, for an app that answers GetRole
+# but not GetRoleName (AccessKit through at least 0.24)
+_ROLE_NAMES = (
+    "invalid", "accelerator label", "alert", "animation", "arrow", "calendar",
+    "canvas", "check box", "check menu item", "color chooser", "column header",
+    "combo box", "date editor", "desktop icon", "desktop frame", "dial", "dialog",
+    "directory pane", "drawing area", "file chooser", "filler", "focus traversable",
+    "font chooser", "frame", "glass pane", "html container", "icon", "image",
+    "internal frame", "label", "layered pane", "list", "list item", "menu", "menu bar",
+    "menu item", "option pane", "page tab", "page tab list", "panel", "password text",
+    "popup menu", "progress bar", "button", "radio button", "radio menu item",
+    "root pane", "row header", "scroll bar", "scroll pane", "separator", "slider",
+    "spin button", "split pane", "status bar", "table", "table cell",
+    "table column header", "table row header", "tearoff menu item", "terminal", "text",
+    "toggle button", "tool bar", "tool tip", "tree", "tree table", "unknown",
+    "viewport", "window", "extended", "header", "footer", "paragraph", "ruler",
+    "application", "autocomplete", "editbar", "embedded", "entry", "chart", "caption",
+    "document frame", "heading", "page", "section", "redundant object", "form", "link",
+    "input method window", "table row", "tree item", "document spreadsheet",
+    "document presentation", "document text", "document web", "document email",
+    "comment", "list box", "grouping", "image map", "notification", "info bar",
+    "level bar", "title bar", "block quote", "audio", "video", "definition", "article",
+    "landmark", "log", "marquee", "math", "rating", "timer", "static", "math fraction",
+    "math root", "subscript", "superscript", "description list", "description term",
+    "description value", "footnote", "content deletion", "content insertion", "mark",
+    "suggestion", "push button menu", "switch",
+)
+
 # Window-relative coordinates beyond this are toolkit noise, not geometry
 _EXTENT_SANITY = 20000
 
@@ -400,11 +428,14 @@ def _role_num(bus: Bus, svc: str, path: str) -> int:
         return -1
 
 
-def _role_name(bus: Bus, svc: str, path: str) -> str:
+def _role_name(bus: Bus, svc: str, path: str, role_num: int) -> str:
     try:
-        return str(bus.call(svc, path, _ACCESSIBLE, "GetRoleName")[0])
+        name = str(bus.call(svc, path, _ACCESSIBLE, "GetRoleName")[0])
     except (CallRefused, IndexError):
-        return ""
+        name = ""
+    if name or not 0 <= role_num < len(_ROLE_NAMES):
+        return name
+    return _ROLE_NAMES[role_num]
 
 
 def _children(bus: Bus, svc: str, path: str) -> list[tuple[str, str]]:
@@ -633,7 +664,7 @@ def _element(
     if ext is None:
         return None
     return {
-        "role": _role_name(bus, svc, path),
+        "role": _role_name(bus, svc, path, role_num),
         "name": nm,
         "extent": ext,
         "clickable": _clickable_now(states),
