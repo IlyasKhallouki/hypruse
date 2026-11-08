@@ -86,7 +86,7 @@ if [ "$REC" = 1 ]; then
   # end on a close-up of the form (yad opens in the middle of the screen),
   # so the filled field and ticked boxes are readable at README width
   last=$(ffprobe -v error -show_entries format=duration -of csv=p=0 "$OUT/raw.mp4")
-  ffmpeg -loglevel error -y -ss "$(awk -v d="$last" 'BEGIN{print d-1.6}')" -i "$OUT/raw.mp4" -frames:v 1 \
+  ffmpeg -loglevel error -y -ss "$(awk -v d="$last" 'BEGIN{print d-3}')" -i "$OUT/raw.mp4" -frames:v 1 \
     -vf "crop=iw/4:ih/4:iw*3/8:ih*0.385,scale=1920:1080:flags=lanczos" "$OUT/zoom.png"
   ffmpeg -loglevel error -y -i "$OUT/raw.mp4" -loop 1 -t 2.5 -framerate 30 -i "$OUT/zoom.png" \
     -filter_complex "[0:v]fps=30,scale=1920:1080,setsar=1,format=yuv420p[a];[1:v]fps=30,scale=1920:1080,setsar=1,format=yuv420p[b];[a][b]concat=n=2:v=1[v]" \
