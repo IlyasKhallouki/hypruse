@@ -6,6 +6,8 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.13.1] - 2026-11-08
+
 ### Fixed
 
 - The MCP server starts with mcp 2. Arch moved `python-mcp` to 2.3.0 on
