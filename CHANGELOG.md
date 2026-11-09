@@ -17,6 +17,12 @@ All notable changes to this project are documented here. The format follows
   github:IlyasKhallouki/hypruse`, a package built against nixpkgs' own mcp,
   an overlay and a Home Manager module that adds hypruse to
   `programs.mcp.servers`. See [Nix](README.md#nix).
+- A computer-use provider for Hermes Agent in `integrations/hermes/`. With
+  `computer_use.backend: hypruse`, Hermes' `computer_use` tool captures
+  windows as numbered accessibility controls, presses them and types into
+  them in the background, and passes hypruse's refusals to the model
+  unchanged. It runs the hypruse CLI and installs nothing into Hermes'
+  environment.
 
 ## [0.13.1] - 2026-11-08
 

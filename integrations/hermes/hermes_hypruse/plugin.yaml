@@ -1,0 +1,21 @@
+manifest_version: 2
+name: hypruse
+version: 0.1.0
+description: >-
+  hypruse for Hermes computer use on Hyprland: numbered accessibility controls
+  pressed in the background, typing and keys sent to one window, and apps on
+  the agent's own workspaces (99 down to 90) while the human keeps theirs.
+  Drives the hypruse CLI (0.13 or newer); its trust layers and refusals apply.
+author: Ilyas Khallouki
+license: MIT
+homepage: https://github.com/IlyasKhallouki/hypruse/tree/main/integrations/hermes
+tags:
+  - computer-use
+  - hyprland
+  - wayland
+  - accessibility
+requires_hermes: ">=0.23.0"
+platforms:
+  - linux
+config_keys:
+  - computer_use.hypruse
