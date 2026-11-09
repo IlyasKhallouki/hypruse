@@ -16,7 +16,7 @@ The setup commands you run yourself, `hypruse init` and `hypruse skill install`,
 
 ## Installing it
 
-`uvx`, the Claude Code plugin and `uv tool install` download hypruse and its Python dependencies from PyPI. The AUR and Nix packages come from those services. Each host has its own policy for those downloads.
+`uvx` and `uv tool install` download hypruse and its Python dependencies from PyPI. The Claude Code plugin runs hypruse from its own copy of the source and downloads the dependency versions locked in its `uv.lock` from PyPI. The AUR and Nix packages come from those services. Each host has its own policy for those downloads.
 
 ## Questions
 

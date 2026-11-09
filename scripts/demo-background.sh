@@ -11,7 +11,7 @@
 #
 # It writes demo-out/raw.mp4 (the full recording), demo-out/demo.mp4 (for the
 # release notes and social posts) and demo-out/demo.gif (for the README).
-# Review them before copying demo.gif over assets/demo.gif.
+# Review them before using either one anywhere.
 #
 # Settings: OUT=dir (default demo-out), REC=0 to run the steps without
 # recording or the reveal, HYPRUSE="uv run --quiet hypruse" from a checkout.

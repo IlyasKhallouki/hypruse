@@ -1,5 +1,4 @@
 import json
-import shutil
 import subprocess
 import tomllib
 from pathlib import Path
@@ -39,22 +38,18 @@ def test_version_sources_agree():
     assert [p.get("version") for p in market["plugins"]] == [None]
 
 
-def test_claude_plugin_runs_the_pinned_release(tmp_path):
-    # Anthropic's plugin directory blocks an unpinned uvx and a server
-    # started through `sh -c`, so the plugin runs one plain command: uvx on
-    # the exact release its skill describes, whatever else is installed
-    version = tomllib.loads((ROOT / "pyproject.toml").read_text())["project"]["version"]
+def test_claude_plugin_runs_its_own_locked_source():
+    # Anthropic's plugin directory refuses a PyPI version pin (a release can
+    # gain files after review), so the plugin runs the source it ships with
+    # the dependency versions in the committed uv.lock, and nothing else
     plugin = json.loads((ROOT / ".claude-plugin" / "plugin.json").read_text())
     server = plugin["mcpServers"]["hypruse"]
-    assert server == {"command": "uvx", "args": [f"hypruse=={version}"]}
-    stub = tmp_path / "uvx"
-    stub.write_text('#!/bin/sh\necho uvx "$@"\n')
-    stub.chmod(0o755)
-    proc = subprocess.run(
-        [shutil.which(server["command"], path=str(tmp_path)), *server["args"]],
-        env={"PATH": str(tmp_path)}, capture_output=True, text=True, check=True,
-    )
-    assert proc.stdout.split() == ["uvx", f"hypruse=={version}"]
+    assert server == {"command": "uv", "args": [
+        "run", "--quiet", "--locked", "--no-dev", "--project", "${CLAUDE_PLUGIN_ROOT}", "hypruse"]}
+    lock = tomllib.loads((ROOT / "uv.lock").read_text())
+    ours = [p for p in lock["package"] if p["name"] == "hypruse"]
+    version = tomllib.loads((ROOT / "pyproject.toml").read_text())["project"]["version"]
+    assert ours and ours[0]["version"] == version  # a stale lock fails --locked
 
 
 def test_registry_ownership_token_matches_server_name():

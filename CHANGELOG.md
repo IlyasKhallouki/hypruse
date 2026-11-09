@@ -6,6 +6,16 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Changed
+
+- The Claude Code plugin runs hypruse from its own copy of the source with
+  `uv run --locked`, using the dependency versions in the committed
+  `uv.lock`. Anthropic's plugin directory refuses a PyPI version pin like
+  `uvx hypruse==0.14.1`, because a release can gain files after review.
+- `uv.lock` moves to mcp 2.3.0, so plugin users run the current SDK. CI
+  checks that the lock matches `pyproject.toml` and also tests the oldest
+  mcp 1 hypruse allows.
+
 ### Added
 
 - An icon for the plugin's directory listing (`assets/icon.png`).
