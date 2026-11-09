@@ -29,6 +29,7 @@
           ./skills
           ./tests
           ./server.json # the version and registry-name tests read it
+          ./.claude-plugin # and the plugin version tests read its manifests
           ./waybar/hypruse-status.sh # and the Waybar module's tests run it
         ];
       };

@@ -30,8 +30,9 @@ python3Packages.buildPythonApplication {
   # 0.13.1 runs on mcp 1 and 2, so nixpkgs' mcp is used as it is
   dependencies = [ python3Packages.mcp ];
 
-  # ctypes.util.find_library finds nothing on NixOS, which would leave the
-  # keymap empty and break typing on non-US layouts
+  # ctypes.util.find_library finds nothing on NixOS. Without libxkbcommon the
+  # keymap stays empty, and typing keys into a background window with
+  # Hyprland's sendshortcut then refuses every character
   postPatch = ''
     substituteInPlace src/hypruse/keymap.py \
       --replace-fail 'ctypes.util.find_library("xkbcommon")' \
