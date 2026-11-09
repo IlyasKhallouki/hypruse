@@ -1,0 +1,22 @@
+{
+  "name": "hypruse",
+  "version": "0.13.1",
+  "description": "Computer use for Hyprland: the hypruse MCP server (window tree over IPC, screenshots and zoom, clicks on controls by name, pointer and keyboard) and the agent skill that teaches the desktop-first workflow",
+  "author": {
+    "name": "Ilyas Khallouki",
+    "url": "https://github.com/IlyasKhallouki"
+  },
+  "homepage": "https://github.com/IlyasKhallouki/hypruse#readme",
+  "repository": "https://github.com/IlyasKhallouki/hypruse",
+  "license": "MIT",
+  "keywords": ["hyprland", "wayland", "computer-use", "mcp", "desktop-automation"],
+  "mcpServers": {
+    "hypruse": {
+      "command": "sh",
+      "args": [
+        "-c",
+        "if command -v hypruse >/dev/null 2>&1; then exec hypruse; fi; exec uvx hypruse"
+      ]
+    }
+  }
+}

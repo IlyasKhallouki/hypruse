@@ -42,7 +42,7 @@ packages = ["src/hypruse"]
 
 [tool.hatch.build.targets.sdist]
 include = [
-    "/src/hypruse", "/skills/hypruse", "/tests", "/server.json",
+    "/src/hypruse", "/skills/hypruse", "/tests", "/server.json", "/.claude-plugin",
     "/README.md", "/LICENSE", "/CHANGELOG.md", "/ARCHITECTURE.md", "/CONTRIBUTING.md",
 ]
 

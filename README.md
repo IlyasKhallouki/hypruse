@@ -66,6 +66,17 @@ install it from there.
 
 **Read-only mode:** set `HYPRUSE_READONLY=1` in the server config to expose only the observation tools (`desktop`, `screenshot`, `zoom`, `ui`, `marks`, `binds`, `wait_for`). The agent can see and narrate but cannot click, type, or launch. A good first week.
 
+### Claude Code plugin
+
+The plugin holds the MCP server and the agent skill. Add this repository as a plugin marketplace, then install the plugin from it:
+
+```sh
+claude plugin marketplace add IlyasKhallouki/hypruse
+claude plugin install hypruse@hypruse
+```
+
+Inside a session, `/plugin marketplace add IlyasKhallouki/hypruse` and `/plugin install hypruse@hypruse` do the same. The server runs the installed `hypruse` when one is on `PATH` (AUR, `uv tool install`) and `uvx hypruse` otherwise. If you registered hypruse earlier with `hypruse init` or `claude mcp add`, run `claude mcp remove -s user hypruse` first, or Claude Code lists every tool twice. For the same reason, remove the `~/.claude/skills/hypruse` link if `hypruse skill install` made one. After a release, `claude plugin update hypruse@hypruse` fetches the new version.
+
 ### On Omarchy
 
 - grim, wtype, ImageMagick and wl-clipboard ship with Omarchy, and mise installs `uv` the first time you run it, so `yay -S hypruse` and `hypruse init` are all it takes. `init` registers the installed `hypruse` rather than `uvx`, because an MCP client started outside your shell may not find mise's `uvx` shim.

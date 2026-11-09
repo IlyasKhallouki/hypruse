@@ -1,0 +1,17 @@
+{
+  "name": "hypruse",
+  "description": "Computer use for Hyprland: the hypruse MCP server and its agent skill, as one Claude Code plugin",
+  "owner": {
+    "name": "Ilyas Khallouki",
+    "url": "https://github.com/IlyasKhallouki"
+  },
+  "plugins": [
+    {
+      "name": "hypruse",
+      "source": "./",
+      "description": "Sees and drives the live Hyprland desktop: window tree over IPC, screenshots and zoom, clicks on controls by name, pointer and keyboard, plus the skill that teaches the desktop-first workflow",
+      "category": "automation",
+      "tags": ["hyprland", "wayland", "computer-use", "desktop"]
+    }
+  ]
+}
