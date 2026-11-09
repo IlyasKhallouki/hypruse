@@ -6,6 +6,10 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Added
+
+- An icon for the plugin's directory listing (`assets/icon.png`).
+
 ## [0.14.1] - 2026-11-09
 
 ### Fixed

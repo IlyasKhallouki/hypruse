@@ -10,6 +10,7 @@
   "repository": "https://github.com/IlyasKhallouki/hypruse",
   "license": "MIT",
   "keywords": ["hyprland", "wayland", "computer-use", "mcp", "desktop-automation"],
+  "icon": "./assets/icon.png",
   "documentationUrl": "https://github.com/IlyasKhallouki/hypruse#readme",
   "supportUrl": "https://github.com/IlyasKhallouki/hypruse/issues",
   "privacyPolicyUrl": "https://github.com/IlyasKhallouki/hypruse/blob/main/PRIVACY.md",
