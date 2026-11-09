@@ -6,6 +6,14 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Added
+
+- A Claude Code plugin. `claude plugin marketplace add IlyasKhallouki/hypruse`
+  and then `claude plugin install hypruse@hypruse` install the MCP server
+  and the agent skill together. The server runs the installed `hypruse`
+  when one is on `PATH` and `uvx hypruse` otherwise, the same rule
+  `hypruse init` follows.
+
 ## [0.13.1] - 2026-11-08
 
 ### Fixed

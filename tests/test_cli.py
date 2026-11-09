@@ -1,4 +1,5 @@
 import json
+import shutil
 import subprocess
 import tomllib
 from pathlib import Path
@@ -14,9 +15,9 @@ ROOT = Path(__file__).resolve().parent.parent
 
 def test_version_sources_agree():
     # RELEASING.md requires bumping pyproject.toml (the PyPI build),
-    # __init__.py (what `hypruse --version` prints), and server.json (the MCP
-    # registry entry); a release cut with only one bumped would report the
-    # previous version forever
+    # __init__.py (what `hypruse --version` prints), server.json (the MCP
+    # registry entry), the skill and the Claude Code plugin; a release cut
+    # with only one bumped would report the previous version forever
     version = tomllib.loads((ROOT / "pyproject.toml").read_text())["project"]["version"]
     assert hypruse.__version__ == version
 
@@ -28,6 +29,31 @@ def test_version_sources_agree():
     # the skill ships inside the wheel and names the release it describes
     skill = (ROOT / "skills" / "hypruse" / "SKILL.md").read_text()
     assert f'version: "{version}"' in skill
+    # Claude Code keeps a plugin user on the cached copy until plugin.json's
+    # version changes, so a release that skips it never reaches them
+    plugin = json.loads((ROOT / ".claude-plugin" / "plugin.json").read_text())
+    assert plugin["version"] == version
+    # plugin.json overrides a marketplace entry's version, so a version in
+    # the entry could only drift from it
+    market = json.loads((ROOT / ".claude-plugin" / "marketplace.json").read_text())
+    assert [p.get("version") for p in market["plugins"]] == [None]
+
+
+@pytest.mark.parametrize("installed", [True, False])
+def test_claude_plugin_runs_the_installed_hypruse_or_uvx(tmp_path, installed):
+    # the plugin's server follows init's rule: an installed hypruse on PATH
+    # (AUR, uv tool) wins, and everyone else gets uvx
+    for name in ["uvx", "hypruse"] if installed else ["uvx"]:
+        stub = tmp_path / name
+        stub.write_text(f'#!/bin/sh\necho {name} "$@"\n')
+        stub.chmod(0o755)
+    plugin = json.loads((ROOT / ".claude-plugin" / "plugin.json").read_text())
+    server = plugin["mcpServers"]["hypruse"]
+    proc = subprocess.run(
+        [shutil.which(server["command"]), *server["args"]],
+        env={"PATH": str(tmp_path)}, capture_output=True, text=True, check=True,
+    )
+    assert proc.stdout.split() == (["hypruse"] if installed else ["uvx", "hypruse"])
 
 
 def test_registry_ownership_token_matches_server_name():

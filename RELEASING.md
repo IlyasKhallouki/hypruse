@@ -18,11 +18,14 @@ accounts/credentials; the rest is automated.
 
 ## Cutting a release
 
-1. Bump the version in ALL THREE of `pyproject.toml` (`version`, feeds the
+1. Bump the version in ALL of `pyproject.toml` (`version`, feeds the
    PyPI/tag build), `src/hypruse/__init__.py` (`__version__`, feeds
-   `hypruse --version`), and `server.json` (`version` *and*
-   `packages[0].version`, the MCP registry entry); a test guards that they
-   agree. Move the CHANGELOG `[Unreleased]` entries under the new version.
+   `hypruse --version`), `server.json` (`version` *and*
+   `packages[0].version`, the MCP registry entry), `skills/hypruse/SKILL.md`
+   (`metadata.version`) and `.claude-plugin/plugin.json` (`version`, the
+   Claude Code plugin: users get a new copy only when it changes); a test
+   guards that they agree. Move the CHANGELOG `[Unreleased]` entries under
+   the new version.
 2. Tag and push:
    ```sh
    git tag -a v0.1.0 -m "v0.1.0"
