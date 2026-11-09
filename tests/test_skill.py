@@ -7,6 +7,10 @@ import pytest
 from hypruse import skill
 
 ROOT = Path(__file__).resolve().parent.parent
+# a checkout serves skills/hypruse/; a distro or Nix build runs this suite
+# against the installed wheel, which carries it as hypruse/skill/
+INSTALLED = Path(skill.__file__).resolve().parent / "skill"
+SKILL_DIR = INSTALLED if (INSTALLED / "SKILL.md").is_file() else ROOT / "skills" / "hypruse"
 
 
 @pytest.fixture
@@ -17,7 +21,7 @@ def home(tmp_path, monkeypatch):
 
 def test_the_checkout_carries_the_skill_and_it_is_well_formed():
     src = skill.packaged_dir()
-    assert src == ROOT / "skills" / "hypruse"
+    assert src == SKILL_DIR
     text = (src / "SKILL.md").read_text()
     assert text.startswith("---\n")
     assert "\nname: hypruse\n" in text
@@ -120,7 +124,7 @@ def test_uninstall_removes_ours_and_only_ours(home, capsys):
 
 def test_main_path_prints_the_packaged_directory(capsys):
     assert skill.main(["path"]) == 0
-    assert capsys.readouterr().out.strip() == str(ROOT / "skills" / "hypruse")
+    assert capsys.readouterr().out.strip() == str(SKILL_DIR)
 
 
 def test_a_build_without_the_skill_says_so(monkeypatch, capsys, home):
