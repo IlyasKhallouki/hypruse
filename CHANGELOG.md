@@ -6,6 +6,27 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.14.1] - 2026-11-09
+
+### Fixed
+
+- The Nix flake builds again. Its source left out the plugin manifests
+  that the version tests read, so `nix build` and `nix run` failed their
+  tests at 0.14.0.
+
+### Changed
+
+- The Claude Code plugin starts its server as `uvx hypruse==<version>`, the
+  release its skill describes, instead of preferring an installed `hypruse`
+  through `sh -c`. Anthropic's plugin directory refuses an unpinned uvx and
+  an inline `sh -c` program. The plugin now needs uv even when
+  hypruse is installed another way.
+
+### Added
+
+- `PRIVACY.md`, and the directory listing fields in `plugin.json`
+  (documentation, support and privacy links).
+
 ## [0.14.0] - 2026-11-09
 
 ### Added
