@@ -1,0 +1,32 @@
+#!/usr/bin/env bash
+# Shuts the VM down. By default it presses the virtual power button and waits
+# for the guest to power off, as `sudo poweroff` in the guest would.
+#
+# Usage: scripts/vm/stop [--force] [--timeout SECS]
+#   --force          quit QEMU at once, like pulling the plug
+#   --timeout SECS   how long to wait for the guest, default 120
+source "$(dirname -- "${BASH_SOURCE[0]}")/lib.sh"
+
+force=false
+timeout=120
+while (($#)); do
+  case $1 in
+    --force) force=true; shift ;;
+    --timeout) timeout=${2:?--timeout needs a value}; shift 2 ;;
+    -h | --help) usage; exit 0 ;;
+    *) die "unknown argument: $1 (try --help)" ;;
+  esac
+done
+
+pid=$(vm_pid) || { printf 'the VM is not running\n'; exit 0; }
+if $force; then
+  qmp '{"execute": "quit"}' >/dev/null || true
+else
+  qmp '{"execute": "system_powerdown"}' >/dev/null
+fi
+
+for ((waited = 0; waited < timeout; waited++)); do
+  kill -0 "$pid" 2>/dev/null || { printf 'the VM is off\n'; exit 0; }
+  sleep 1
+done
+die "the guest did not power off within ${timeout}s; scripts/vm/stop --force quits QEMU"

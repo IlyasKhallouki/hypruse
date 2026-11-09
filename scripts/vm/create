@@ -1,0 +1,43 @@
+#!/usr/bin/env bash
+# Creates the VM's empty disk and its UEFI variable store.
+#
+# Usage: scripts/vm/create [--size SIZE] [--force]
+#   --size SIZE   virtual disk size, default 40G, as Omarchy's own test VM.
+#                 The qcow2 is thin: it starts near 200 KiB and grows only
+#                 as the guest writes.
+#   --force       replace an existing disk (its snapshots go with it)
+#
+# Settings: HYPRUSE_VM_DIR (default ~/.cache/hypruse-vm), HYPRUSE_VM_DISK,
+# HYPRUSE_VM_VARS, HYPRUSE_VM_OVMF_VARS_TEMPLATE.
+source "$(dirname -- "${BASH_SOURCE[0]}")/lib.sh"
+
+size=40G
+force=false
+while (($#)); do
+  case $1 in
+    --size) size=${2:?--size needs a value}; shift 2 ;;
+    --size=*) size=${1#*=}; shift ;;
+    --force) force=true; shift ;;
+    -h | --help) usage; exit 0 ;;
+    *) die "unknown argument: $1 (try --help)" ;;
+  esac
+done
+
+need qemu-img "pacman -S qemu-img"
+[[ -f $OVMF_VARS_TEMPLATE ]] || die "no UEFI vars template at $OVMF_VARS_TEMPLATE (pacman -S edk2-ovmf)"
+require_stopped
+if [[ -e $DISK ]] && ! $force; then
+  die "$DISK already exists; scripts/vm/reset returns it to a snapshot, --force starts over"
+fi
+
+mkdir -p -- "$(dirname -- "$DISK")" "$(dirname -- "$VARS")"
+qemu-img create -q -f qcow2 "$DISK" "$size"
+cp -- "$OVMF_VARS_TEMPLATE" "$VARS"
+if $force && [[ -d $SNAP_DIR ]]; then
+  # the old disk's snapshots are gone, so their UEFI vars mean nothing now
+  rm -f -- "$SNAP_DIR"/*.fd
+fi
+
+printf 'disk: %s (%s virtual, %s on disk now)\n' "$DISK" "$size" "$(du -h -- "$DISK" | cut -f1)"
+printf 'uefi: %s\n' "$VARS"
+printf 'next: scripts/vm/boot --iso\n'

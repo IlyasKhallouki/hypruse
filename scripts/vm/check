@@ -1,0 +1,299 @@
+#!/usr/bin/env bash
+# Runs the README quick start in the guest's Hyprland session over ssh and
+# prints one PASS, FAIL or SKIP line per step, then a summary. It exits 1 if
+# any step failed.
+#
+# Usage: scripts/vm/check [--source aur|share|skip] [--agent] [--out DIR]
+#   --source aur     install with `yay -S hypruse`, as the README says (default)
+#   --source share   install this checkout from the 9p share with uv, to try a
+#                    change before it is released
+#   --source skip    keep the hypruse the guest already has
+#   --agent          also ask Claude Code in the guest the README's question.
+#                    Log in to Claude Code in the guest first.
+#   --out DIR        where the log and the screenshot go, default
+#                    $HYPRUSE_VM_DIR/checks/<date-time>
+#
+# Installing needs sudo in the guest. Set HYPRUSE_VM_PASSWORD to the guest
+# user's password, or type it when asked. It goes to the guest over ssh into a
+# file only that user can read, under /run/user, and is removed at the end.
+source "$(dirname -- "${BASH_SOURCE[0]}")/lib.sh"
+
+QUESTION="Use hypruse to list the windows on each of my workspaces."
+
+source_mode=aur
+agent=false
+out=""
+while (($#)); do
+  case $1 in
+    --source) source_mode=${2:?--source needs aur, share or skip}; shift 2 ;;
+    --source=*) source_mode=${1#*=}; shift ;;
+    --agent) agent=true; shift ;;
+    --out) out=${2:?--out needs a directory}; shift 2 ;;
+    -h | --help) usage; exit 0 ;;
+    *) die "unknown argument: $1 (try --help)" ;;
+  esac
+done
+[[ $source_mode =~ ^(aur|share|skip)$ ]] || die "--source is aur, share or skip"
+
+need "$SSH_BIN"
+ensure_key
+out=${out:-$VM_DIR/checks/$(date +%Y%m%d-%H%M%S)}
+mkdir -p -- "$out"
+LOG=$out/check.log
+: >"$LOG"
+
+# Every guest command runs in a login bash with the session's variables, the
+# way upstream's install test reaches the desktop over ssh.
+GUEST_ENV='
+export XDG_RUNTIME_DIR=/run/user/$(id -u)
+export DBUS_SESSION_BUS_ADDRESS=unix:path=$XDG_RUNTIME_DIR/bus
+sig=$(ls -t "$XDG_RUNTIME_DIR/hypr" 2>/dev/null | head -1)
+[ -n "$sig" ] && export HYPRLAND_INSTANCE_SIGNATURE=$sig
+wl=$(find "$XDG_RUNTIME_DIR" -maxdepth 1 -name "wayland-*" ! -name "*.lock" -printf "%f\n" 2>/dev/null | head -1)
+[ -n "$wl" ] && export WAYLAND_DISPLAY=$wl
+export OMARCHY_PATH=${OMARCHY_PATH:-/usr/share/omarchy}
+export PATH=$HOME/.local/bin:$OMARCHY_PATH/bin:$PATH
+command -v mise >/dev/null 2>&1 && eval "$(mise activate bash --shims)"
+GDIR=$XDG_RUNTIME_DIR/hypruse-check
+mkdir -p -m 700 "$GDIR"
+'
+
+gsh() {
+  guest_ssh "bash -lc $(printf %q "$GUEST_ENV$1")" </dev/null
+}
+
+# gput NAME: stdin becomes $GDIR/NAME in the guest, readable by the user only
+gput() {
+  guest_ssh "umask 077; d=/run/user/\$(id -u)/hypruse-check; mkdir -p \"\$d\"; cat > \"\$d/$1\""
+}
+
+OUT=""
+# run TITLE COMMAND: runs COMMAND in the guest, logs it, leaves its output in OUT
+run() {
+  local status=0
+  printf '\n=== %s\n$ %s\n' "$1" "$2" >>"$LOG"
+  OUT=$(gsh "$2" 2>&1) || status=$?
+  printf '%s\n[exit %s]\n' "$OUT" "$status" >>"$LOG"
+  return "$status"
+}
+
+RESULTS=()
+failures=0
+record() {
+  local line
+  line=$(printf '%-4s  %-9s %s' "$1" "$2" "${3:0:160}")
+  RESULTS+=("$line")
+  printf '%s\n' "$line"
+  if [[ $1 == FAIL ]]; then failures=$((failures + 1)); fi
+  return 0
+}
+
+finish() {
+  local pass=0 skip=0 line
+  for line in "${RESULTS[@]}"; do
+    case $line in PASS*) pass=$((pass + 1)) ;; SKIP*) skip=$((skip + 1)) ;; esac
+  done
+  printf '\n== summary (%s, Omarchy guest on 127.0.0.1:%s)\n' "$source_mode" "$SSH_PORT"
+  printf '%s\n' "${RESULTS[@]}"
+  printf '\n%s passed, %s failed, %s skipped. Log and screenshot: %s\n' \
+    "$pass" "$failures" "$skip" "$out"
+  exit $((failures > 0))
+}
+
+first_line() { sed -n '/./{p;q;}' <<<"$1"; }
+
+# --- reach the session ------------------------------------------------------------
+if ! guest_ssh true </dev/null 2>>"$LOG"; then
+  record FAIL ssh "no ssh to $GUEST_USER@127.0.0.1:$SSH_PORT; is the VM up? First time: scripts/vm/shell --bootstrap"
+  finish
+fi
+record PASS ssh "$GUEST_USER@127.0.0.1:$SSH_PORT"
+trap 'guest_ssh "rm -rf /run/user/\$(id -u)/hypruse-check" </dev/null 2>/dev/null || true; cleanup' EXIT
+
+if run session 'test -n "$HYPRLAND_INSTANCE_SIGNATURE" && test -n "$WAYLAND_DISPLAY" && hyprctl -j version >/dev/null && echo "$WAYLAND_DISPLAY, instance $HYPRLAND_INSTANCE_SIGNATURE"'; then
+  record PASS session "Hyprland on $(first_line "$OUT")"
+else
+  record FAIL session "no Hyprland session; log in on the VM screen first (disk passphrase, or the login screen)"
+  finish
+fi
+
+run system 'echo "omarchy $(omarchy-version 2>/dev/null || echo unknown);" $(pacman -Q hyprland grim wtype python-mcp yay 2>/dev/null | tr "\n" ";")' || true
+record INFO system "$(first_line "$OUT")"
+
+# --- install --------------------------------------------------------------------
+if run yay 'command -v yay'; then
+  record PASS yay "$(first_line "$OUT")"
+elif [[ $source_mode == aur ]]; then
+  record FAIL yay "yay is not installed, so the README's first command fails here"
+else
+  record SKIP yay "not installed (not needed for --source $source_mode)"
+fi
+
+askpass=false
+if [[ $source_mode != skip ]] && ! run sudo 'sudo -n true'; then
+  pw=${HYPRUSE_VM_PASSWORD:-}
+  if [[ -z $pw && -t 0 ]]; then
+    read -rsp "guest password for $GUEST_USER (for sudo): " pw
+    printf '\n'
+  fi
+  if [[ -n $pw ]]; then
+    printf '%s\n' "$pw" | gput pw
+    gsh 'printf "#!/bin/sh\nexec cat \"%s\"\n" "$GDIR/pw" >"$GDIR/askpass" && chmod 700 "$GDIR/askpass"' >>"$LOG" 2>&1
+    askpass=true
+  fi
+fi
+SUDO='sudo'
+YAY_SUDO=''
+if $askpass; then
+  SUDO='SUDO_ASKPASS=$GDIR/askpass sudo -A'
+  YAY_SUDO='--sudoflags -A'
+fi
+
+case $source_mode in
+  aur)
+    if run install "export SUDO_ASKPASS=\$GDIR/askpass; yay -S --noconfirm --needed --answerdiff None --answerclean None $YAY_SUDO hypruse"; then
+      record PASS install "yay -S hypruse"
+    else
+      record FAIL install "yay -S hypruse failed: $(tail -n 1 <<<"$OUT")"
+    fi
+    ;;
+  share)
+    cmd='src=/mnt/hypruse
+if ! mountpoint -q "$src"; then
+  '"$SUDO"' mkdir -p "$src" && '"$SUDO"' mount -t 9p -o trans=virtio,version=9p2000.L,ro hypruse "$src" || exit 1
+fi
+command -v uv >/dev/null || { echo "no uv in the guest (run mise once, or install uv)"; exit 1; }
+copy=$GDIR/src
+rm -rf "$copy" && mkdir -p "$copy"
+tar -C "$src" --exclude=.venv --exclude=.git --exclude=.claude -cf - . | tar -C "$copy" -xf -
+uv tool install --force --reinstall "$copy"'
+    if run install "$cmd"; then
+      record PASS install "uv tool install from the shared checkout"
+    else
+      record FAIL install "installing the shared checkout failed: $(tail -n 1 <<<"$OUT")"
+    fi
+    ;;
+  skip)
+    record SKIP install "--source skip"
+    ;;
+esac
+
+if run version 'command -v hypruse && hypruse --version'; then
+  record PASS version "$(tail -n 1 <<<"$OUT") at $(first_line "$OUT")"
+else
+  record FAIL version "no working hypruse on PATH"
+  finish
+fi
+
+# --- the quick start ---------------------------------------------------------------
+# The README's `hypruse init` asks before each client; --yes answers for us.
+if run init 'hypruse init --yes'; then :; fi
+if grep -q '^Running doctor' <<<"$OUT"; then
+  record PASS init "$(grep -E '^- |^  (done|note):' <<<"$OUT" | sed 's/^  */  /' | tr '\n' ' ' | tr -s ' ')"
+else
+  record FAIL init "did not reach its doctor run: $(tail -n 1 <<<"$OUT")"
+fi
+
+if run claude 'command -v claude'; then
+  if run mcp-get 'claude mcp get hypruse'; then
+    command=$(sed -n 's/^ *Command: *//p' <<<"$OUT" | head -1)
+    status=$(sed -n 's/^ *Status: *//p' <<<"$OUT" | head -1)
+    if [[ $command == *uvx* ]]; then
+      record FAIL register "Claude Code runs '$command'; the README says init registers the installed hypruse"
+    elif [[ -n $status && $status != *onnected* ]]; then
+      record FAIL register "Claude Code runs '$command' but reports: $status"
+    else
+      record PASS register "Claude Code runs '$command'${status:+, $status}"
+    fi
+  else
+    record FAIL register "Claude Code has no hypruse server after init: $(first_line "$OUT")"
+  fi
+else
+  record SKIP register "no claude command in the guest"
+fi
+
+if run doctor 'hypruse doctor'; then
+  record PASS doctor "$(tail -n 1 <<<"$OUT")"
+else
+  record FAIL doctor "$(grep -F '[FAIL]' <<<"$OUT" | tr -s ' ' | tr '\n' ';')"
+fi
+
+if run desktop 'hypruse desktop'; then
+  record PASS desktop "$(wc -l <<<"$OUT") lines; $(first_line "$OUT")"
+else
+  record FAIL desktop "$(tail -n 1 <<<"$OUT")"
+fi
+
+# What an agent does first: start the server over stdio and call `desktop`.
+gput mcp_client.py <<'PY'
+import json, subprocess, sys, tempfile
+
+err = tempfile.TemporaryFile(mode="w+")
+proc = subprocess.Popen(sys.argv[1:], stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                        stderr=err, text=True)
+
+def send(msg):
+    proc.stdin.write(json.dumps(msg) + "\n")
+    proc.stdin.flush()
+
+def receive(want):
+    while True:
+        line = proc.stdout.readline()
+        if not line:
+            err.seek(0)
+            tail = err.read()[-600:].strip()
+            sys.exit(f"the server exited before answering request {want}: {tail}")
+        try:
+            msg = json.loads(line)
+        except ValueError:
+            continue
+        if msg.get("id") == want:
+            if "error" in msg:
+                sys.exit(f"request {want} failed: {msg['error']}")
+            return msg["result"]
+
+send({"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {
+    "protocolVersion": "2025-06-18", "capabilities": {},
+    "clientInfo": {"name": "hypruse-vm-check", "version": "1"}}})
+info = receive(1).get("serverInfo", {})
+send({"jsonrpc": "2.0", "method": "notifications/initialized"})
+send({"jsonrpc": "2.0", "id": 2, "method": "tools/list"})
+tools = [t["name"] for t in receive(2).get("tools", [])]
+if "desktop" not in tools:
+    sys.exit(f"no desktop tool among {tools}")
+send({"jsonrpc": "2.0", "id": 3, "method": "tools/call",
+      "params": {"name": "desktop", "arguments": {}}})
+result = receive(3)
+text = " ".join(c.get("text", "") for c in result.get("content", []) if c.get("type") == "text")
+proc.stdin.close()
+proc.terminate()
+if result.get("isError"):
+    sys.exit(f"desktop returned an error: {text[:300]}")
+print(f"{info.get('name')} {info.get('version')}: {len(tools)} tools, desktop answered {len(text)} chars")
+print(text[:4000])
+PY
+if run mcp 'timeout 90 python3 -I "$GDIR/mcp_client.py" "$(command -v hypruse)"'; then
+  record PASS mcp "$(first_line "$OUT")"
+else
+  record FAIL mcp "$(tail -n 1 <<<"$OUT")"
+fi
+
+if ! $agent; then
+  record SKIP agent "pass --agent once Claude Code is logged in in the guest"
+elif run agent "timeout 300 claude -p $(printf %q "$QUESTION") --allowedTools mcp__hypruse__desktop" &&
+  grep -qi workspace <<<"$OUT"; then
+  record PASS agent "$(first_line "$OUT")"
+else
+  record FAIL agent "$(first_line "$OUT")"
+fi
+
+# --- what the screen shows ----------------------------------------------------------
+printf '\n=== screenshot\n' >>"$LOG"
+if gsh 'grim "$GDIR/screen.png" && cat "$GDIR/screen.png"' >"$out/screen.png" 2>>"$LOG" &&
+  [[ $(head -c 4 "$out/screen.png" | od -An -tx1 | tr -d ' ') == 89504e47 ]]; then
+  record PASS screen "$out/screen.png ($(du -h -- "$out/screen.png" | cut -f1))"
+else
+  record FAIL screen "grim in the guest gave no PNG; see $LOG"
+fi
+
+finish

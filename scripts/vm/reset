@@ -1,0 +1,27 @@
+#!/usr/bin/env bash
+# Returns the stopped VM to a snapshot: the disk and the UEFI variable store
+# both go back to the moment scripts/vm/snapshot took it. Everything the
+# guest wrote since then is discarded.
+#
+# Usage: scripts/vm/reset [NAME]   default: clean
+source "$(dirname -- "${BASH_SOURCE[0]}")/lib.sh"
+
+case ${1:-} in
+  -h | --help) usage; exit 0 ;;
+  -*) die "unknown argument: $1 (try --help)" ;;
+esac
+name=${1:-clean}
+
+need qemu-img
+[[ -f $DISK ]] || die "no disk at $DISK; run scripts/vm/create first"
+require_stopped
+qemu-img snapshot -l -U "$DISK" | awk -v n="$name" 'NR > 2 && $2 == n { found = 1 } END { exit !found }' ||
+  die "no snapshot named $name; scripts/vm/snapshot --list shows what there is"
+
+qemu-img snapshot -a "$name" "$DISK"
+if [[ -f $SNAP_DIR/$name.fd ]]; then
+  cp -- "$SNAP_DIR/$name.fd" "$VARS"
+else
+  log "warning: no saved UEFI vars for $name; kept the current $VARS"
+fi
+printf 'reset %s to snapshot %s\n' "$DISK" "$name"

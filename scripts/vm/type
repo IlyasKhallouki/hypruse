@@ -1,0 +1,60 @@
+#!/usr/bin/env bash
+# Types text into the running VM as keystrokes, then presses Enter. It is for
+# the prompts that come before ssh works when there is no window to type in:
+# the disk passphrase at boot, or the login screen.
+#
+# Usage: scripts/vm/type [--no-enter] TEXT
+#        scripts/vm/type --key KEY       one key by its QEMU name: ret, esc, tab
+#
+# It assumes a US keyboard layout in the guest. Letters, digits and the
+# printable ASCII punctuation are supported.
+source "$(dirname -- "${BASH_SOURCE[0]}")/lib.sh"
+
+enter=true
+case ${1:-} in
+  -h | --help | "") usage; exit 0 ;;
+  --no-enter) enter=false; shift ;;
+  --key)
+    key=${2:?--key needs a key name}
+    qmp "{\"execute\": \"send-key\", \"arguments\": {\"keys\": [{\"type\": \"qcode\", \"data\": \"$key\"}]}}" >/dev/null
+    exit 0
+    ;;
+esac
+(($# == 1)) || die "give the text as one argument (quote it)"
+vm_running || die "the VM is not running"
+need python3
+
+keys=$(python3 -I - "$1" "$enter" <<'PY'
+import json, sys
+
+text, enter = sys.argv[1], sys.argv[2] == "true"
+plain = {" ": "spc", "-": "minus", "=": "equal", "[": "bracket_left", "]": "bracket_right",
+         ";": "semicolon", "'": "apostrophe", "`": "grave_accent", "\\": "backslash",
+         ",": "comma", ".": "dot", "/": "slash"}
+shifted = {"!": "1", "@": "2", "#": "3", "$": "4", "%": "5", "^": "6", "&": "7", "*": "8",
+           "(": "9", ")": "0", "_": "minus", "+": "equal", "{": "bracket_left",
+           "}": "bracket_right", ":": "semicolon", '"': "apostrophe", "~": "grave_accent",
+           "|": "backslash", "<": "comma", ">": "dot", "?": "slash"}
+
+def press(*keys):
+    print(json.dumps({"execute": "send-key", "arguments": {
+        "keys": [{"type": "qcode", "data": k} for k in keys]}}))
+
+for ch in text:
+    if ch.isascii() and (ch.islower() or ch.isdigit()):
+        press(ch)
+    elif ch.isascii() and ch.isupper():
+        press("shift", ch.lower())
+    elif ch in plain:
+        press(plain[ch])
+    elif ch in shifted:
+        press("shift", shifted[ch])
+    else:
+        sys.exit(f"type: cannot type {ch!r}")
+if enter:
+    press("ret")
+PY
+)
+# one QMP session for the whole text; QEMU queues the keys in order
+mapfile -t cmds <<<"$keys"
+qmp "${cmds[@]}" >/dev/null
