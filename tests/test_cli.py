@@ -39,21 +39,22 @@ def test_version_sources_agree():
     assert [p.get("version") for p in market["plugins"]] == [None]
 
 
-@pytest.mark.parametrize("installed", [True, False])
-def test_claude_plugin_runs_the_installed_hypruse_or_uvx(tmp_path, installed):
-    # the plugin's server follows init's rule: an installed hypruse on PATH
-    # (AUR, uv tool) wins, and everyone else gets uvx
-    for name in ["uvx", "hypruse"] if installed else ["uvx"]:
-        stub = tmp_path / name
-        stub.write_text(f'#!/bin/sh\necho {name} "$@"\n')
-        stub.chmod(0o755)
+def test_claude_plugin_runs_the_pinned_release(tmp_path):
+    # Anthropic's plugin directory blocks an unpinned uvx and a server
+    # started through `sh -c`, so the plugin runs one plain command: uvx on
+    # the exact release its skill describes, whatever else is installed
+    version = tomllib.loads((ROOT / "pyproject.toml").read_text())["project"]["version"]
     plugin = json.loads((ROOT / ".claude-plugin" / "plugin.json").read_text())
     server = plugin["mcpServers"]["hypruse"]
+    assert server == {"command": "uvx", "args": [f"hypruse=={version}"]}
+    stub = tmp_path / "uvx"
+    stub.write_text('#!/bin/sh\necho uvx "$@"\n')
+    stub.chmod(0o755)
     proc = subprocess.run(
-        [shutil.which(server["command"]), *server["args"]],
+        [shutil.which(server["command"], path=str(tmp_path)), *server["args"]],
         env={"PATH": str(tmp_path)}, capture_output=True, text=True, check=True,
     )
-    assert proc.stdout.split() == (["hypruse"] if installed else ["uvx", "hypruse"])
+    assert proc.stdout.split() == ["uvx", f"hypruse=={version}"]
 
 
 def test_registry_ownership_token_matches_server_name():

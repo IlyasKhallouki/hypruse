@@ -75,7 +75,17 @@ claude plugin marketplace add IlyasKhallouki/hypruse
 claude plugin install hypruse@hypruse
 ```
 
-Inside a session, `/plugin marketplace add IlyasKhallouki/hypruse` and `/plugin install hypruse@hypruse` do the same. The server runs the installed `hypruse` when one is on `PATH` (AUR, `uv tool install`) and `uvx hypruse` otherwise. If you registered hypruse earlier with `hypruse init` or `claude mcp add`, run `claude mcp remove -s user hypruse` first, or Claude Code lists every tool twice. For the same reason, remove the `~/.claude/skills/hypruse` link if `hypruse skill install` made one. After a release, `claude plugin update hypruse@hypruse` fetches the new version.
+Inside a session, `/plugin marketplace add IlyasKhallouki/hypruse` and `/plugin install hypruse@hypruse` do the same. The plugin starts its server as `uvx hypruse==<version>`, the release its skill describes, so it needs [uv](https://docs.astral.sh/uv/) even when hypruse is installed another way. If you registered hypruse earlier with `hypruse init` or `claude mcp add`, run `claude mcp remove -s user hypruse` first, or Claude Code lists every tool twice. For the same reason, remove the `~/.claude/skills/hypruse` link if `hypruse skill install` made one. After a release, `claude plugin update hypruse@hypruse` fetches the new version.
+
+The plugin works in Claude Code on a Linux machine running Hyprland. Cowork starts the server only when the session runs on your own computer, and hypruse has not been tested there. Chat on claude.ai (on the web, in the desktop app and on mobile) loads the skill but never starts the server, so the plugin has nothing to drive there. macOS and Windows are not supported.
+
+What the plugin runs and sends: it has no hooks, and its one program is the MCP server above. On first start, uv downloads that hypruse release and its Python dependencies from PyPI. After that the server talks only to local sockets (Hyprland's IPC, the Wayland display and the accessibility bus), makes no network connections and has no telemetry. It runs the desktop tools listed under Requirements (`hyprctl`, `grim`, `wtype` and `busctl`, plus ImageMagick for `marks` and `wl-clipboard` for the opt-in clipboard tool), and `launch` runs the command the agent gives it through Hyprland's `exec`. Screenshots, window titles and control names go only to your own Claude session, as tool results; [Security model](#security-model) lists what stays on disk, and [PRIVACY.md](PRIVACY.md) says the same in short. The skill's `allowed-tools` let Claude run the read-only shell verbs (`hypruse doctor`, `desktop`, `screenshot`, `zoom`, `ui`, `marks`, `binds`, `wait_for` and `--help`) and its Read tool, which opens the screenshot files, without a prompt. The shell verbs need hypruse on `PATH`; the plugin's MCP tools and every verb that clicks, types or launches still ask unless you allow them.
+
+Things to ask once it is installed:
+
+- *"Use hypruse to list the windows on each of my workspaces."*
+- *"Take a screenshot of my screen and tell me which apps are open."*
+- *"Switch to the workspace where btop is running and tell me which process is using the most CPU."*
 
 ### Nix
 
@@ -448,6 +458,8 @@ uv run python scripts/e2e_input.py             # supervised: takes the seat ~10s
 The background suite opens yad forms on the agent's workspaces, drives them in the background, and checks after every step that your active window, workspace and cursor are exactly as they were, so leave the mouse and keyboard alone while it runs. It also checks Hyprland's own events, which hold even while you work: no window it opened ever takes focus, and no agent workspace is switched to.
 
 The input e2e is deliberately manual: it borrows your cursor and keyboard, counts down, proves click/scroll/type delivery by reading the target terminal's screen back over kitty remote control, and restores your focus.
+
+`scripts/vm/` builds an Omarchy test VM, and its scripts run only when you start them yourself: `fetch` downloads the Omarchy ISO from iso.omarchy.org and its signing key from GitHub, `shell --bootstrap` serves a setup script to the VM on 127.0.0.1 until ssh works, and `check` installs hypruse from the AUR inside the VM. [scripts/vm/README.md](scripts/vm/README.md) has the details. The plugin never runs anything under `scripts/`.
 
 ## Roadmap
 

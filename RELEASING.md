@@ -23,10 +23,11 @@ accounts/credentials; the rest is automated.
    `hypruse --version`), `server.json` (`version` *and*
    `packages[0].version`, the MCP registry entry), `skills/hypruse/SKILL.md`
    (`metadata.version`) and `.claude-plugin/plugin.json` (`version`, the
-   Claude Code plugin: users get a new copy only when it changes); a test
-   guards that they agree. Move the CHANGELOG `[Unreleased]` entries under
-   the new version.
-2. Tag and push:
+   Claude Code plugin: users get a new copy only when it changes, and the
+   `hypruse==` pin in `mcpServers.hypruse.args`, the release the plugin's
+   server runs); tests guard that they agree. Move the CHANGELOG
+   `[Unreleased]` entries under the new version.
+2. Tag and push the tag, not `main` yet:
    ```sh
    git tag -a v0.1.0 -m "v0.1.0"
    git push origin v0.1.0
@@ -34,10 +35,20 @@ accounts/credentials; the rest is automated.
    The `release` workflow builds, publishes to PyPI via OIDC, publishes
    `server.json` to the MCP registry (also OIDC, after waiting for the
    release to land on PyPI), and cuts a GitHub release with the artifacts.
-3. Verify: `uvx hypruse --version`, and the registry entry:
+3. Verify: `uvx hypruse==0.1.0 --version`, and the registry entry:
    ```sh
    curl "https://registry.modelcontextprotocol.io/v0.1/servers?search=io.github.IlyasKhallouki/hypruse"
    ```
+4. Push `main` once the release is on PyPI. The plugin's server runs the
+   exact release its `hypruse==` pin names, and both the plugin's own
+   marketplace and Anthropic's directory read `main`, so a `main` pushed
+   before PyPI has the release hands out a pin that cannot install yet.
+   ```sh
+   git push origin main
+   ```
+   Anthropic's directory then scans the new commit and holds it for a
+   reviewer (a pinned uvx package is always held), so check the plugin's
+   page at https://claude.ai/directory/manage after a release.
 
 ## AUR
 

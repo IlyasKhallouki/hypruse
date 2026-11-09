@@ -1,7 +1,7 @@
 {
   "name": "hypruse",
-  "version": "0.14.0",
-  "description": "Computer use for Hyprland: the hypruse MCP server (window tree over IPC, screenshots and zoom, clicks on controls by name, pointer and keyboard) and the agent skill that teaches the desktop-first workflow",
+  "version": "0.14.1",
+  "description": "Computer use on Linux with Hyprland: Claude reads the window tree over IPC, takes screenshots, clicks controls by name through the accessibility tree, and drives the pointer and keyboard, with the skill that teaches the workflow. The server runs on your machine; uv fetches it from PyPI on first start, and after that it makes no network connections.",
   "author": {
     "name": "Ilyas Khallouki",
     "url": "https://github.com/IlyasKhallouki"
@@ -10,13 +10,13 @@
   "repository": "https://github.com/IlyasKhallouki/hypruse",
   "license": "MIT",
   "keywords": ["hyprland", "wayland", "computer-use", "mcp", "desktop-automation"],
+  "documentationUrl": "https://github.com/IlyasKhallouki/hypruse#readme",
+  "supportUrl": "https://github.com/IlyasKhallouki/hypruse/issues",
+  "privacyPolicyUrl": "https://github.com/IlyasKhallouki/hypruse/blob/main/PRIVACY.md",
   "mcpServers": {
     "hypruse": {
-      "command": "sh",
-      "args": [
-        "-c",
-        "if command -v hypruse >/dev/null 2>&1; then exec hypruse; fi; exec uvx hypruse"
-      ]
+      "command": "uvx",
+      "args": ["hypruse==0.14.1"]
     }
   }
 }
