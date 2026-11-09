@@ -1,11 +1,10 @@
-import ctypes.util
-
 import pytest
 
 from hypruse import keymap
 
-pytestmark = pytest.mark.skipif(ctypes.util.find_library("xkbcommon") is None,
-                                reason="libxkbcommon not installed")
+# ask the module itself, so a build that points it at the library by path
+# (Nix, where find_library sees nothing) runs these tests instead of skipping
+pytestmark = pytest.mark.skipif(keymap._lib() is None, reason="libxkbcommon not installed")
 
 
 def test_us_layout():
