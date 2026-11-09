@@ -6,6 +6,13 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Added
+
+- A Nix flake for x86_64-linux and aarch64-linux: `nix run
+  github:IlyasKhallouki/hypruse`, a package built against nixpkgs' own mcp,
+  an overlay and a Home Manager module that adds hypruse to
+  `programs.mcp.servers`. See [Nix](README.md#nix).
+
 ## [0.13.1] - 2026-11-08
 
 ### Fixed

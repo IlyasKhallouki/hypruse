@@ -66,6 +66,43 @@ install it from there.
 
 **Read-only mode:** set `HYPRUSE_READONLY=1` in the server config to expose only the observation tools (`desktop`, `screenshot`, `zoom`, `ui`, `marks`, `binds`, `wait_for`). The agent can see and narrate but cannot click, type, or launch. A good first week.
 
+### Nix
+
+The repository is a flake for x86_64-linux and aarch64-linux. To try it without installing anything:
+
+```sh
+nix run github:IlyasKhallouki/hypruse -- doctor
+```
+
+Install it before you run `hypruse init`. `init` registers the `hypruse` it finds on `PATH`, and a `nix run` copy is not on it, so `init` would fall back to `uvx`. For a quick install, run `nix profile add github:IlyasKhallouki/hypruse` (older Nix calls it `nix profile install`). In a flake:
+
+```nix
+{
+  inputs.hypruse = {
+    url = "github:IlyasKhallouki/hypruse";
+    inputs.nixpkgs.follows = "nixpkgs";
+  };
+}
+```
+
+Then add `inputs.hypruse.packages.${pkgs.stdenv.hostPlatform.system}.default` to `environment.systemPackages` or `home.packages`, or add `inputs.hypruse.overlays.default` to `nixpkgs.overlays` and use `pkgs.hypruse`.
+
+With Home Manager, import the module instead:
+
+```nix
+{
+  imports = [ inputs.hypruse.homeModules.default ];
+  programs.hypruse.enable = true;
+  programs.hypruse.env.HYPRUSE_BACKGROUND = "1"; # optional, the server's environment
+  programs.mcp.enable = true;
+  programs.claude-code.enableMcpIntegration = true; # if Home Manager manages Claude Code
+}
+```
+
+The module installs hypruse and adds it to `programs.mcp.servers`, the shared list of MCP servers that Home Manager's Claude Code module and other client modules read. On a Home Manager release without `programs.mcp`, the module only installs the package. If Home Manager does not manage your client, register the installed binary by hand: `claude mcp add -s user hypruse -- "$(command -v hypruse)"`.
+
+The package wrapper appends grim, wtype, wl-clipboard, ImageMagick and systemd's `busctl` to the end of `PATH`, so the copies your session already has take precedence. It leaves out `hyprctl`, which has to match the running compositor, so hypruse uses the one your Hyprland session provides. If a client starts hypruse without that `PATH`, `hypruse.override { withHyprctl = true; }` appends nixpkgs' `hyprctl` as a last resort.
+
 ### On Omarchy
 
 - grim, wtype, ImageMagick and wl-clipboard ship with Omarchy, and mise installs `uv` the first time you run it, so `yay -S hypruse` and `hypruse init` are all it takes. `init` registers the installed `hypruse` rather than `uvx`, because an MCP client started outside your shell may not find mise's `uvx` shim.
