@@ -1,6 +1,6 @@
 {
   "name": "hypruse",
-  "version": "0.13.1",
+  "version": "0.14.0",
   "description": "Computer use for Hyprland: the hypruse MCP server (window tree over IPC, screenshots and zoom, clicks on controls by name, pointer and keyboard) and the agent skill that teaches the desktop-first workflow",
   "author": {
     "name": "Ilyas Khallouki",
