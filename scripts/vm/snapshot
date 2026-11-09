@@ -1,0 +1,48 @@
+#!/usr/bin/env bash
+# Takes, lists or deletes internal qcow2 snapshots of the stopped VM. Each
+# snapshot also keeps a copy of the UEFI variable store, which lives outside
+# the qcow2 and holds the boot entry the installer wrote.
+#
+# Usage: scripts/vm/snapshot [NAME]        take NAME (default: clean)
+#        scripts/vm/snapshot --list
+#        scripts/vm/snapshot --delete NAME
+#
+# scripts/vm/reset NAME goes back to one.
+source "$(dirname -- "${BASH_SOURCE[0]}")/lib.sh"
+
+need qemu-img
+[[ -f $DISK ]] || die "no disk at $DISK; run scripts/vm/create first"
+
+has_snapshot() {
+  qemu-img snapshot -l -U "$DISK" | awk -v n="$1" 'NR > 2 && $2 == n { found = 1 } END { exit !found }'
+}
+
+case ${1:-} in
+  -h | --help)
+    usage
+    ;;
+  --list | -l)
+    qemu-img snapshot -l -U "$DISK"
+    ;;
+  --delete | -d)
+    name=${2:?--delete needs a snapshot name}
+    require_stopped
+    has_snapshot "$name" || die "no snapshot named $name in $DISK"
+    qemu-img snapshot -d "$name" "$DISK"
+    rm -f -- "$SNAP_DIR/$name.fd"
+    printf 'deleted snapshot %s\n' "$name"
+    ;;
+  -*)
+    die "unknown argument: $1 (try --help)"
+    ;;
+  *)
+    name=${1:-clean}
+    [[ $name =~ ^[A-Za-z0-9._-]+$ ]] || die "use letters, digits, dot, dash or underscore in a snapshot name"
+    require_stopped
+    has_snapshot "$name" && die "snapshot $name exists; delete it first: scripts/vm/snapshot --delete $name"
+    mkdir -p -- "$SNAP_DIR"
+    qemu-img snapshot -c "$name" "$DISK"
+    cp -- "$VARS" "$SNAP_DIR/$name.fd"
+    printf 'took snapshot %s of %s (%s on disk)\n' "$name" "$DISK" "$(du -h -- "$DISK" | cut -f1)"
+    ;;
+esac

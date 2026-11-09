@@ -1,0 +1,62 @@
+#!/usr/bin/env bash
+# Opens ssh to the guest as HYPRUSE_VM_USER (default tester) with the VM's
+# own key, or runs one command there.
+#
+# Usage: scripts/vm/shell [command ...]
+#        scripts/vm/shell --bootstrap [--port PORT]
+#
+# --bootstrap is for a fresh install, where sshd is off and the firewall is
+# closed. It serves a short setup script on 127.0.0.1 (the guest reaches the
+# host as 10.0.2.2) and prints the one line to type in a guest terminal. The
+# script adds the VM key to ~/.ssh/authorized_keys, opens port 22 to the host
+# in ufw and enables sshd, which is what Omarchy's own install test does.
+# It waits until ssh works, then stops serving.
+source "$(dirname -- "${BASH_SOURCE[0]}")/lib.sh"
+
+need "$SSH_BIN"
+ensure_key
+
+case ${1:-} in
+  -h | --help)
+    usage
+    exit 0
+    ;;
+  --bootstrap)
+    shift
+    port=8022
+    [[ ${1:-} == --port ]] && port=${2:?--port needs a value}
+    need python3
+    serve=$(mktemp -d)
+    CLEANUP+=("$serve")
+    {
+      printf 'set -e\n'
+      printf 'mkdir -p ~/.ssh && chmod 700 ~/.ssh\n'
+      printf "grep -qxF '%s' ~/.ssh/authorized_keys 2>/dev/null || echo '%s' >> ~/.ssh/authorized_keys\n" \
+        "$(<"$SSH_KEY.pub")" "$(<"$SSH_KEY.pub")"
+      printf 'chmod 600 ~/.ssh/authorized_keys\n'
+      printf 'sudo ufw allow from 10.0.2.2 to any port 22 proto tcp\n'
+      printf 'sudo systemctl enable --now sshd.service\n'
+      printf 'echo "ssh is ready; go back to the host"\n'
+    } >"$serve/bootstrap"
+    python3 -I -m http.server "$port" --bind 127.0.0.1 --directory "$serve" >/dev/null 2>&1 &
+    server=$!
+    trap 'kill "$server" 2>/dev/null; cleanup' EXIT
+    printf 'In a terminal in the guest (Super + Enter), type:\n\n'
+    printf '  curl -fsS http://10.0.2.2:%s/bootstrap | bash\n\n' "$port"
+    printf 'It asks for your guest password once, for sudo. Waiting for ssh'
+    until guest_ssh true 2>/dev/null; do
+      kill -0 "$server" 2>/dev/null || die "the setup server on port $port stopped; is the port free?"
+      printf '.'
+      sleep 3
+    done
+    printf '\nssh works: scripts/vm/shell\n'
+    ;;
+  *)
+    # a terminal gets a terminal and may prompt; a command keeps BatchMode so
+    # it never hangs. ssh keeps the first value it sees for an option.
+    if (($# == 0)); then
+      exec "$SSH_BIN" -t -o BatchMode=no "${SSH_OPTS[@]}" "$GUEST_USER@127.0.0.1"
+    fi
+    exec "$SSH_BIN" "${SSH_OPTS[@]}" "$GUEST_USER@127.0.0.1" "$@"
+    ;;
+esac

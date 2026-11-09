@@ -1,0 +1,105 @@
+#!/usr/bin/env bash
+# Downloads the Omarchy ISO into the VM directory and checks it twice before
+# using it: against the SHA-256 that omarchy.org publishes, and against the
+# detached GPG signature, made with the Omarchy key pinned below.
+#
+# Usage: scripts/vm/fetch [--check]
+#   --check   ask the server for the size and compare it with the free space,
+#             download nothing
+#
+# Settings: HYPRUSE_VM_DIR (default ~/.cache/hypruse-vm), HYPRUSE_VM_ISO.
+# For a release this script does not pin yet, set OMARCHY_VERSION and
+# OMARCHY_ISO_SHA256 (the SHA-256 button under the download on omarchy.org),
+# and OMARCHY_ISO_URL if the file name changed.
+source "$(dirname -- "${BASH_SOURCE[0]}")/lib.sh"
+
+# Omarchy 4.5.0, released 2026-11-05 from the quattro branch. The hash is
+# the one omarchy.org shows; the size is what iso.omarchy.org reported.
+PINNED_VERSION=4.5.0
+PINNED_SHA256=5d6288bc57f96f6231719830457582c846a2291985201c36a9a7d1216978b00f
+# "Omarchy <pkgs@omarchy.org>", the key the ISO's .sig is made with. The
+# public half ships in omacom/omarchy-iso as builder/omarchy.gpg.
+KEY_URL=https://raw.githubusercontent.com/omacom/omarchy-iso/quattro/builder/omarchy.gpg
+KEY_FPR=40DFB630FF42BCFFB047046CF0134EE680CAC571
+
+check_only=false
+case ${1:-} in
+  --check) check_only=true ;;
+  "") ;;
+  -h | --help)
+    usage
+    exit 0
+    ;;
+  *) die "unknown argument: $1 (try --help)" ;;
+esac
+
+url=${OMARCHY_ISO_URL:-https://iso.omarchy.org/omarchy-$OMARCHY_VERSION-x86.iso}
+if [[ -n ${OMARCHY_ISO_SHA256:-} ]]; then
+  sha256=$OMARCHY_ISO_SHA256
+elif [[ $OMARCHY_VERSION == "$PINNED_VERSION" ]]; then
+  sha256=$PINNED_SHA256
+else
+  die "no pinned SHA-256 for Omarchy $OMARCHY_VERSION; set OMARCHY_ISO_SHA256 from omarchy.org"
+fi
+
+need curl
+size=$(curl -fsSIL --max-time 30 "$url" |
+  awk 'tolower($1) == "content-length:" { n = $2 } END { print n }' | tr -d '\r')
+[[ $size =~ ^[0-9]+$ ]] || die "no size from $url; is the URL right?"
+
+part=$ISO.part
+have=0
+[[ -f $part ]] && have=$(stat -c %s -- "$part")
+[[ -f $ISO ]] && have=$size
+iso_dir=$(dirname -- "$ISO")
+free=$(free_bytes "$iso_dir")
+# 256 MiB of slack so the filesystem is never filled to the last block
+needed=$((size - have + 256 * 1024 * 1024))
+
+printf 'iso:   %s\n' "$url"
+printf 'size:  %s (%s bytes)\n' "$(human "$size")" "$size"
+printf 'dir:   %s, %s free\n' "$iso_dir" "$(human "$free")"
+if ((free < needed)); then
+  printf 'space: short by %s\n' "$(human $((needed - free)))"
+  $check_only && exit 1
+  die "not enough space in $iso_dir; free some or set HYPRUSE_VM_DIR (see scripts/vm/README.md)"
+fi
+printf 'space: enough\n'
+$check_only && exit 0
+
+need sha256sum
+need gpg
+mkdir -p -- "$iso_dir"
+
+verify() {
+  local file=$1 got home status
+  log "checking the SHA-256 of $file"
+  got=$(sha256sum -- "$file" | cut -d' ' -f1)
+  [[ $got == "$sha256" ]] || die "SHA-256 mismatch: got $got, expected $sha256. Remove $file and run fetch again."
+
+  log "checking the GPG signature"
+  home=$(mktemp -d)
+  CLEANUP+=("$home")
+  curl -fsSL --max-time 30 -o "$home/omarchy.gpg" "$KEY_URL"
+  local fpr
+  fpr=$(gpg --homedir "$home" --batch --with-colons --show-keys "$home/omarchy.gpg" 2>/dev/null |
+    awk -F: '$1 == "fpr" { print $10; exit }')
+  [[ $fpr == "$KEY_FPR" ]] || die "the key at $KEY_URL has fingerprint '$fpr', expected $KEY_FPR"
+  gpg --homedir "$home" --batch --quiet --import "$home/omarchy.gpg" 2>/dev/null
+  curl -fsSL --max-time 30 -o "$ISO.sig" "$url.sig"
+  status=$(gpg --homedir "$home" --batch --status-fd 1 --verify "$ISO.sig" "$file" 2>/dev/null || true)
+  grep -q "^\[GNUPG:\] VALIDSIG $KEY_FPR " <<<"$status" ||
+    die "the signature $ISO.sig does not verify $file with key $KEY_FPR"
+}
+
+if [[ -f $ISO ]]; then
+  verify "$ISO"
+  printf 'ok: %s is already here and verified\n' "$ISO"
+  exit 0
+fi
+
+log "downloading to $part (resumes if interrupted)"
+curl -fL --retry 3 --continue-at - -o "$part" "$url"
+verify "$part"
+mv -- "$part" "$ISO"
+printf 'ok: %s (SHA-256 and signature verified)\n' "$ISO"

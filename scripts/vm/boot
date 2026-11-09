@@ -1,0 +1,208 @@
+#!/usr/bin/env bash
+# Boots the Omarchy test VM: q35 under KVM with UEFI firmware, a virtio GPU
+# that gives the guest a render node (Hyprland needs one), user-mode
+# networking with the guest's ssh on 127.0.0.1:2222, and this checkout shared
+# read-only over 9p under the tag "hypruse".
+#
+# Usage: scripts/vm/boot [options] [-- extra qemu arguments]
+#   --iso [PATH]       attach the installer ISO (default: the one fetch saved).
+#                      The empty disk boots first and falls through to it; an
+#                      installed disk boots itself.
+#   --display MODE     window: a QEMU window on your desktop
+#                      headless: no window, the screen on VNC 127.0.0.1:5905
+#                      default: window when a Wayland or X display is set
+#   --no-gl            plain virtio-vga and software rendering in the guest,
+#                      the setup Omarchy's own headless install test uses
+#   --vnc N            VNC display number in headless mode, default 5 (port 5905)
+#   --mem SIZE         guest RAM, default 8G
+#   --cpus N           vCPUs, default the host's threads up to 8
+#   --ssh-port PORT    host port for the guest's ssh, default 2222, 0 for none
+#   --share DIR        directory shared read-only as 9p tag "hypruse",
+#                      default this checkout
+#   --no-share         share nothing
+#   --detach           run in the background; scripts/vm/stop shuts it down
+#   --paused           start with the CPUs stopped (QEMU -S), to test the flags
+#   --timeout SECS     quit QEMU after SECS seconds
+#   --print            print the QEMU command line and exit
+#
+# Settings: HYPRUSE_VM_DIR, HYPRUSE_VM_DISK, HYPRUSE_VM_VARS, HYPRUSE_VM_ISO,
+# HYPRUSE_VM_SSH_PORT, HYPRUSE_VM_RENDERNODE, HYPRUSE_VM_OVMF_CODE.
+source "$(dirname -- "${BASH_SOURCE[0]}")/lib.sh"
+
+iso=""
+display=""
+gl=true
+vnc=5
+mem=8G
+cpus=$(nproc)
+((cpus > 8)) && cpus=8
+share=$REPO_ROOT
+detach=false
+paused=false
+timeout_s=""
+print_only=false
+extra=()
+
+while (($#)); do
+  case $1 in
+    --iso)
+      if [[ ${2:-} && $2 != -* ]]; then iso=$2; shift 2; else iso=$ISO; shift; fi
+      ;;
+    --iso=*) iso=${1#*=}; shift ;;
+    --display) display=${2:?--display needs window or headless}; shift 2 ;;
+    --display=*) display=${1#*=}; shift ;;
+    --headless) display=headless; shift ;;
+    --window) display=window; shift ;;
+    --no-gl) gl=false; shift ;;
+    --vnc) vnc=${2:?--vnc needs a display number}; shift 2 ;;
+    --mem) mem=${2:?--mem needs a size}; shift 2 ;;
+    --cpus) cpus=${2:?--cpus needs a number}; shift 2 ;;
+    --ssh-port) SSH_PORT=${2:?--ssh-port needs a port}; shift 2 ;;
+    --share) share=${2:?--share needs a directory}; shift 2 ;;
+    --no-share) share=""; shift ;;
+    --detach) detach=true; shift ;;
+    --paused) paused=true; shift ;;
+    --timeout) timeout_s=${2:?--timeout needs seconds}; shift 2 ;;
+    --print) print_only=true; shift ;;
+    -h | --help) usage; exit 0 ;;
+    --) shift; extra=("$@"); break ;;
+    *) die "unknown argument: $1 (try --help)" ;;
+  esac
+done
+
+if [[ -z $display ]]; then
+  if [[ -n ${WAYLAND_DISPLAY:-}${DISPLAY:-} ]]; then display=window; else display=headless; fi
+fi
+[[ $display == window || $display == headless ]] || die "--display is window or headless, not $display"
+[[ -z $timeout_s ]] || ! $detach || die "--timeout and --detach do not mix"
+
+QEMU=${HYPRUSE_VM_QEMU:-qemu-system-x86_64}
+need "$QEMU" "pacman -S qemu-system-x86"
+
+# --- what this QEMU can do ------------------------------------------------------
+# Arch splits QEMU's displays and GPUs into modules, and qemu-system-x86 alone
+# has neither virtio-vga nor any window. Name the missing packages up front
+# instead of letting QEMU fail on the first flag it does not know.
+devices=$("$QEMU" -device help 2>/dev/null)
+displays=$("$QEMU" -display help 2>/dev/null)
+has_device() { grep -q "name \"$1\"" <<<"$devices"; }
+has_display() { grep -qx "$1" <<<"$displays"; }
+
+gpu=virtio-vga
+$gl && gpu=virtio-vga-gl
+missing=()
+if ! has_device "$gpu"; then
+  missing+=(qemu-hw-display-virtio-vga qemu-hw-display-virtio-gpu)
+  $gl && missing+=(qemu-hw-display-virtio-vga-gl qemu-hw-display-virtio-gpu-gl)
+fi
+if [[ $display == window ]] && ! has_display sdl; then
+  missing+=(qemu-ui-sdl qemu-ui-opengl)
+fi
+if [[ $display == headless ]] && $gl && ! has_display egl-headless; then
+  missing+=(qemu-ui-egl-headless qemu-ui-opengl)
+fi
+if ((${#missing[@]})); then
+  log "this QEMU lacks the modules for $gpu with a $display display. Install them with:"
+  log "  sudo pacman -S --needed $(printf '%s\n' "${missing[@]}" | sort -u | tr '\n' ' ')"
+  log "or the whole set with: sudo pacman -S --needed qemu-desktop"
+  log "QEMU loads only modules from its own build, so if the repos have a newer"
+  log "QEMU than this one, upgrade everything instead: sudo pacman -Syu <the packages>"
+  $print_only || exit 1
+fi
+
+# --- preflight ------------------------------------------------------------------
+if ! $print_only; then
+  [[ -r /dev/kvm && -w /dev/kvm ]] || die "/dev/kvm is not usable by $USER (join the kvm group)"
+  [[ -f $OVMF_CODE ]] || die "no UEFI firmware at $OVMF_CODE (pacman -S edk2-ovmf)"
+  [[ -f $DISK ]] || die "no disk at $DISK; run scripts/vm/create first"
+  [[ -f $VARS ]] || die "no UEFI vars at $VARS; run scripts/vm/create first"
+  [[ -z $iso || -f $iso ]] || die "no ISO at $iso; run scripts/vm/fetch first"
+  [[ -z $share || -d $share ]] || die "no directory $share to share"
+  if pid=$(vm_pid); then die "the VM is already running (pid $pid)"; fi
+  mkdir -p -- "$VM_DIR"
+  rm -f -- "$QMP_SOCK"
+fi
+
+render=${HYPRUSE_VM_RENDERNODE:-}
+if [[ -z $render ]]; then
+  for render in /dev/dri/renderD*; do break; done
+fi
+if $gl && ! $print_only && [[ ! -e $render ]]; then
+  die "no host render node for GL; pass --no-gl or set HYPRUSE_VM_RENDERNODE"
+fi
+
+# --- the command line -------------------------------------------------------------
+args=(
+  -name hypruse-omarchy
+  -enable-kvm -cpu host -machine q35
+  -smp "$cpus" -m "$mem"
+  -drive "if=pflash,format=raw,readonly=on,file=$OVMF_CODE"
+  -drive "if=pflash,format=raw,file=$VARS"
+  # discard lets fstrim in the guest hand freed blocks back to the qcow2
+  -drive "file=$DISK,format=qcow2,if=none,id=disk0,discard=unmap,detect-zeroes=unmap"
+  -device virtio-blk-pci,drive=disk0,bootindex=1
+  -device virtio-rng-pci
+  -device qemu-xhci,id=xhci -device usb-tablet,bus=xhci.0
+  -serial "file:$SERIAL_LOG"
+  -qmp "unix:$QMP_SOCK,server=on,wait=off"
+  -pidfile "$PIDFILE"
+)
+
+if [[ -n $iso ]]; then
+  args+=(
+    -drive "file=$iso,media=cdrom,if=none,format=raw,readonly=on,id=cd0"
+    -device ide-cd,drive=cd0,bootindex=2
+  )
+fi
+
+if [[ $SSH_PORT == 0 ]]; then
+  args+=(-netdev user,id=net0)
+else
+  args+=(-netdev "user,id=net0,hostfwd=tcp:127.0.0.1:$SSH_PORT-:22")
+fi
+args+=(-device virtio-net-pci,netdev=net0)
+
+if [[ -n $share ]]; then
+  args+=(-virtfs "local,path=$share,mount_tag=hypruse,security_model=none,readonly=on")
+fi
+
+args+=(-device "$gpu")
+case $display:$gl in
+  window:true) args+=(-display sdl,gl=on) ;;
+  window:false) args+=(-display sdl) ;;
+  headless:true) args+=(-display "egl-headless,rendernode=$render" -vnc "127.0.0.1:$vnc") ;;
+  headless:false) args+=(-display none -vnc "127.0.0.1:$vnc") ;;
+esac
+
+$paused && args+=(-S)
+$detach && args+=(-daemonize)
+args+=("${extra[@]}")
+
+if $print_only; then
+  printf '%q' "$QEMU"
+  printf ' %q' "${args[@]}"
+  printf '\n'
+  exit 0
+fi
+
+[[ $display == headless ]] && log "screen: VNC on 127.0.0.1:$((5900 + vnc))"
+[[ $SSH_PORT != 0 ]] && log "ssh:    scripts/vm/shell (127.0.0.1:$SSH_PORT, once sshd runs in the guest)"
+log "serial: $SERIAL_LOG"
+
+if [[ -n $timeout_s ]]; then
+  status=0
+  timeout "$timeout_s" "$QEMU" "${args[@]}" || status=$?
+  rm -f -- "$PIDFILE" "$QMP_SOCK"
+  if ((status == 124)); then
+    log "stopped QEMU after ${timeout_s}s, as asked"
+    exit 0
+  fi
+  exit "$status"
+fi
+
+if $detach; then
+  "$QEMU" "${args[@]}"
+  log "running in the background (pid $(<"$PIDFILE")); scripts/vm/stop shuts it down"
+else
+  exec "$QEMU" "${args[@]}"
+fi
