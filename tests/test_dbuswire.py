@@ -154,6 +154,160 @@ def test_the_call_carries_its_arguments():
     assert dbuswire.unmarshal("isi", sent, body_at) == [2, "é", 2]
 
 
+# --- fast paths held to the generic codec ------------------------------------
+
+
+def _old_header(serial, body_len, dest, path, iface, member, sig):
+    fields = [(1, ("o", path)), (2, ("s", iface)), (3, ("s", member)), (6, ("s", dest))]
+    if sig:
+        fields.append((8, ("g", sig)))
+    w = dbuswire._Writer(b"l" + bytes([1, 0, 1]) + dbuswire.struct.pack("<II", body_len, serial))
+    w.put("a(yv)", fields)
+    w._pad(8)
+    return bytes(w.buf)
+
+
+@pytest.mark.parametrize("dest, path, iface, member, sig", [
+    ("x", "/p", "i", "M", ""),
+    (":1.42", "/org/a11y/atspi/accessible/1234", "org.freedesktop.DBus.Properties", "Get", "ss"),
+    ("org.a11y.Bus", "/", "org.a11y.atspi.Accessible", "GetChildren", ""),
+    ("a" * 7, "/" + "b" * 13, "c" * 5, "d" * 3, "isi"),
+    ("é", "/ü", "ï", "ô", "a(so)"),
+])
+def test_the_call_header_is_the_bytes_the_generic_writer_makes(dest, path, iface, member, sig):
+    for serial, body_len in ((1, 0), (77, 12), (2**31, 999)):
+        assert dbuswire._call_header(serial, body_len, dest, path, iface, member, sig) == \
+            _old_header(serial, body_len, dest, path, iface, member, sig)
+
+
+def _message(kind, fields, sig="", args=()):
+    body = dbuswire.marshal(sig, args)
+    w = dbuswire._Writer(b"l" + bytes([kind, 0, 1]) + dbuswire.struct.pack("<II", len(body), 5))
+    w.put("a(yv)", fields + ([(8, ("g", sig))] if sig else []))
+    w._pad(8)
+    return bytes(w.buf) + body
+
+
+@pytest.mark.parametrize("kind, fields, sig", [
+    (2, [(5, ("u", 9)), (7, ("s", ":1.5"))], "s"),
+    (2, [(7, ("s", ":1.5")), (6, ("s", ":1.9")), (5, ("u", 2**32 - 1))], ""),
+    (3, [(4, ("s", "org.a11y.Error.Gone")), (5, ("u", 3))], "s"),
+    (4, [(1, ("o", "/org/a11y")), (2, ("s", "org.a11y.atspi.Event")), (3, ("s", "Changed"))], "s"),
+    (2, [(5, ("u", 1)), (9, ("u", 2))], "a(so)"),  # unix fds: a field it does not use
+])
+def test_the_reply_fields_are_what_the_generic_reader_finds(kind, fields, sig):
+    msg = _message(kind, fields, sig, [[] if sig == "a(so)" else "x"] if sig else [])
+    generic = dict(dbuswire._Reader(msg, 12).get("a(yv)"))
+    assert dbuswire._reply_fields(msg) == (generic.get(5), generic.get(8, ""), generic.get(4, ""))
+
+
+@pytest.mark.parametrize("sig, value", [
+    ("u", 0), ("u", 2**32 - 1),
+    ("s", ""), ("s", "push button"), ("s", "日本語 ✓"),
+    ("v", ("s", "")), ("v", ("s", "Save as…")), ("v", ("u", 7)), ("v", ("b", True)),
+    ("v", ("a(so)", [[":1.2", "/a"]])),
+    ("a(so)", []), ("a(so)", [[":1.2", "/a"]]),
+    ("a(so)", [[":1." + str(i), "/org/a11y/atspi/accessible/" + "x" * (i % 9)] for i in range(40)]),
+])
+def test_the_fast_bodies_read_what_the_generic_reader_reads(sig, value):
+    for pad in (0, 8, 16, 24):  # a body starts 8-aligned, after a header of any length
+        data = b"\0" * pad + dbuswire.marshal(sig, [value])
+        reference = [dbuswire._Reader(data, pad).get(t) for t in dbuswire.split_signature(sig)]
+        assert dbuswire._FAST_BODIES[sig](data, pad) == reference
+    body = dbuswire.marshal(sig, [value])
+    assert dbuswire.unmarshal(sig, body) == [dbuswire._Reader(body).get(sig)]
+
+
+@pytest.mark.parametrize("sig, value", [("u", 5), ("s", "abc"), ("v", ("s", "abc")),
+                                        ("a(so)", [[":1.2", "/a"], [":1.3", "/bb"]])])
+def test_a_truncated_body_is_an_error_on_the_fast_paths_too(sig, value):
+    body = dbuswire.marshal(sig, [value])
+    for cut in range(1, len(body)):
+        with pytest.raises(dbuswire.DBusError):
+            dbuswire.unmarshal(sig, body[:-cut])
+
+
+# --- several calls in one round trip -------------------------------------------
+
+
+def test_a_batch_returns_each_reply_in_call_order_whatever_order_they_come_in():
+    conn, peer = _paired()
+    peer.sendall(_reply(3, "u", [30]) + _reply(1, "s", ["one"])
+                 + _reply(2, "a(so)", [[[":1.2", "/k"]]]))
+    out = conn.call_many([("x", "/a", "i", "M", "", ()), ("x", "/b", "i", "M", "", ()),
+                          ("x", "/c", "i", "M", "", ())])
+    assert out == [["one"], [[[":1.2", "/k"]]], [30]]
+    sent = peer.recv(65536)
+    assert sent.count(b"\x03\x01s\0") == 3  # three member fields: three messages in one send
+
+
+def test_an_error_reply_takes_its_own_slot_and_the_rest_still_arrive():
+    conn, peer = _paired()
+    peer.sendall(_reply(1, "s", ["gone"], error="org.a11y.Error.Gone") + _reply(2, "u", [4]))
+    out = conn.call_many([("x", "/a", "i", "M", "", ()), ("x", "/b", "i", "M", "", ())])
+    assert isinstance(out[0], dbuswire.CallError) and out[0].name == "org.a11y.Error.Gone"
+    assert out[1] == [4] and not conn.closed
+
+
+def test_a_batch_skips_stale_replies_and_signals():
+    conn, peer = _paired()
+    conn._serial = 10  # earlier calls took serials 1 to 10
+    signal = _message(4, [(1, ("o", "/p")), (2, ("s", "i")), (3, ("s", "Sig"))], "s", ["x"])
+    peer.sendall(_reply(9, "s", ["stale"]) + signal + _reply(11, "s", ["mine"]))
+    assert conn.call_many([("x", "/a", "i", "M", "", ())]) == [["mine"]]
+
+
+def test_a_batch_that_loses_its_answer_closes_the_connection():
+    conn, peer = _paired()
+    peer.sendall(_reply(1, "s", ["only one"]))
+    with pytest.raises(dbuswire.DBusError, match="no answer to 2 calls"):
+        conn.call_many([("x", "/a", "i", "M", "", ()), ("x", "/b", "i", "M", "", ())], timeout=0.05)
+    assert conn.closed
+
+
+def test_a_batch_waits_for_each_reply_not_for_the_whole_batch():
+    # a slow app that answers every call within the timeout must not fail a
+    # batch whose replies together take longer than it
+    conn, peer = _paired()
+    import time as _time
+
+    def answer():
+        data = b""
+        while data.count(b"\x03\x01s\0") < 30:
+            data += peer.recv(65536)
+        for serial in range(1, 31):
+            _time.sleep(0.01)
+            peer.sendall(_reply(serial, "u", [serial]))
+
+    t = threading.Thread(target=answer)
+    t.start()
+    out = conn.call_many([("x", f"/o{i}", "i", "M", "", ()) for i in range(30)], timeout=0.15)
+    t.join()
+    assert out == [[i] for i in range(1, 31)] and not conn.closed
+
+
+def test_a_busctl_batch_reads_a_property_as_a_plain_value(monkeypatch):
+    monkeypatch.setattr(a11y.shutil, "which", lambda n: "/usr/bin/busctl")
+
+    def run(argv, **k):
+        if argv[4] == "get-property":
+            return subprocess.CompletedProcess(argv, 0, '{"type":"s","data":"Save"}', "")
+        return subprocess.CompletedProcess(argv, 0, '{"type":"u","data":[43]}', "")
+
+    monkeypatch.setattr(a11y.subprocess, "run", run)
+    # conftest makes dbuswire.connection raise Unreachable: the busctl path
+    bus = a11y.Bus("unix:path=/x")
+    out = bus.call_many([("app", "/o", "org.freedesktop.DBus.Properties", "Get", "ss",
+                          "org.a11y.atspi.Accessible", "Name"),
+                         ("app", "/o", "org.a11y.atspi.Accessible", "GetRole")])
+    assert out == [["Save"], [43]]
+
+
+def test_an_empty_batch_sends_nothing():
+    conn, peer = _paired()
+    assert conn.call_many([]) == [] and conn._serial == 0
+
+
 # --- a11y.Bus over the connection --------------------------------------------
 
 
@@ -166,6 +320,16 @@ class _FakeConnection:
         if self.error:
             raise self.error
         return self.reply
+
+    def call_many(self, calls):
+        # as Connection.call_many: an error reply fills its own slot, a lost
+        # connection raises for the whole batch
+        self.calls.extend(calls)
+        if isinstance(self.error, dbuswire.CallError):
+            return [self.error for _ in calls]
+        if self.error:
+            raise self.error
+        return [self.reply for _ in calls]
 
 
 def test_bus_passes_typed_arguments(monkeypatch):

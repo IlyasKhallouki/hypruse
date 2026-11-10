@@ -209,6 +209,34 @@ class Bus:
         except dbuswire.DBusError as exc:
             raise A11yError(f"{method} failed: {exc}") from None
 
+    def call_many(self, calls: list[tuple[str, ...]]) -> list[Any]:
+        """Several calls, each written as for `call`, sent together over the
+        socket and answered in one round trip; through busctl, one by one.
+        Each result is the out-args list or the CallRefused that call would
+        have raised; a lost connection raises A11yError for the batch."""
+        wire = self._wire()
+        if wire is None:
+            out: list[Any] = []
+            for c in calls:
+                try:
+                    if c[2] == _PROPERTIES and c[3] == "Get":  # busctl call keeps the variant
+                        out.append([self.prop(c[0], c[1], c[5], c[6])])
+                    else:
+                        out.append(self.call(*c))
+                except CallRefused as exc:
+                    out.append(exc)
+            return out
+        batch = []
+        for svc, path, iface, method, *sig_args in calls:
+            sig, args = (sig_args[0], tuple(sig_args[1:])) if sig_args else ("", ())
+            batch.append((svc, path, iface, method, sig, tuple(_typed(sig, args))))
+        try:
+            replies = wire.call_many(batch)
+        except dbuswire.DBusError as exc:
+            raise A11yError(f"{len(calls)} calls failed: {exc}") from None
+        return [CallRefused(f"{c[3]} failed: {r}") if isinstance(r, dbuswire.CallError) else r
+                for c, r in zip(calls, replies, strict=True)]
+
     def prop(self, svc: str, path: str, iface: str, name: str) -> Any:
         """A property value (not list-wrapped)."""
         if self._wire() is None:
@@ -538,6 +566,19 @@ def _clickable_now(states: set[int]) -> bool:
 WALK_BUDGET = 2000
 
 
+_PROPERTIES = "org.freedesktop.DBus.Properties"
+_PREFETCH = 64  # objects whose basics one round trip asks for
+
+
+def _state_bits(words: Any) -> set[int]:
+    out: set[int] = set()
+    for wi, word in enumerate(words):
+        for bit in range(32):
+            if int(word) >> bit & 1:
+                out.add(wi * 32 + bit)
+    return out
+
+
 class _Walk:
     """Depth-first over a subtree in document order, each object once, at
     most `max_nodes` of them. Iterating yields (svc, path); `skip()` during
@@ -545,15 +586,64 @@ class _Walk:
     afterwards whether objects were left unread, so a caller can tell
     "not there" from "not reached". Each object once, because a toolkit can
     list one under two parents (Qt WebEngine does with a web page's
-    subtrees), and walking the copy spends the budget twice."""
+    subtrees), and walking the copy spends the budget twice.
 
-    def __init__(self, bus: Bus, root: tuple[str, str], max_nodes: int):
+    What a caller reads of each object (`fields`: name, role, children,
+    states) comes in batches: the object about to be yielded and the next
+    ones on the stack, every call of the batch in one round trip, read with
+    the same rules as _name, _role_num, _children and _states. Everything is
+    asked of the app live. Not the AT-SPI cache: GTK 4's keeps hidden
+    widgets it once realized and leaves out shown ones it has not, so a
+    cached child list can hide a password field the live one shows."""
+
+    def __init__(self, bus: Bus, root: tuple[str, str], max_nodes: int,
+                 fields: tuple[str, ...] = ("name", "role", "children")):
         self._bus, self._root, self._max = bus, root, max_nodes
+        self._want = tuple(dict.fromkeys((*fields, "children")))  # the walk itself needs children
+        self._info: dict[tuple[str, str], dict[str, Any]] = {}
         self._skip = False
         self.truncated = False
 
     def skip(self) -> None:
         self._skip = True
+
+    def name(self, node: tuple[str, str]) -> str:
+        return self._get(node, "name")
+
+    def role(self, node: tuple[str, str]) -> int:
+        return self._get(node, "role")
+
+    def states(self, node: tuple[str, str]) -> set[int]:
+        return self._get(node, "states")
+
+    def children(self, node: tuple[str, str]) -> list[tuple[str, str]]:
+        return self._get(node, "children")
+
+    def _get(self, node: tuple[str, str], key: str) -> Any:
+        if key not in self._info.get(node, {}):
+            self._fetch([node], (key,))
+        return self._info[node][key]
+
+    def _fetch(self, nodes: list[tuple[str, str]], keys: tuple[str, ...]) -> None:
+        calls: list[tuple[str, ...]] = []
+        plan: list[tuple[tuple[str, str], str]] = []
+        for node in nodes:
+            have = self._info.setdefault(node, {})
+            svc, path = node
+            for key in keys:
+                if key in have:
+                    continue
+                if key == "name":
+                    calls.append((svc, path, _PROPERTIES, "Get", "ss", _ACCESSIBLE, "Name"))
+                elif key == "role":
+                    calls.append((svc, path, _ACCESSIBLE, "GetRole"))
+                elif key == "children":
+                    calls.append((svc, path, _ACCESSIBLE, "GetChildren"))
+                else:
+                    calls.append((svc, path, _ACCESSIBLE, "GetState"))
+                plan.append((node, key))
+        for (node, key), reply in zip(plan, self._bus.call_many(calls), strict=True):
+            self._info[node][key] = _read(key, reply)
 
     def __iter__(self):
         stack: list[tuple[str, str]] = [self._root]
@@ -566,10 +656,35 @@ class _Walk:
                 self.truncated = True
                 return
             done.add(node)
+            if any(k not in self._info.get(node, {}) for k in self._want):
+                # this object and the next ones the walk will reach, together
+                batch = [node]
+                for nxt in reversed(stack):
+                    if len(batch) >= _PREFETCH:
+                        break
+                    if nxt not in done and nxt not in batch:
+                        batch.append(nxt)
+                self._fetch(batch, self._want)
             self._skip = False
             yield node
             if not self._skip:  # reversed keeps document order under a LIFO stack
-                stack.extend(reversed(_children(self._bus, *node)))
+                stack.extend(reversed(self.children(node)))
+
+
+def _read(key: str, reply: Any) -> Any:
+    """A batched reply read as _name, _role_num, _children or _states reads
+    its own call's reply, CallRefused included."""
+    refused = isinstance(reply, CallRefused)
+    try:
+        if key == "name":
+            return "" if refused else str(reply[0] or "")
+        if key == "role":
+            return -1 if refused else int(reply[0])
+        if key == "children":
+            return [] if refused else [(cs, cp) for cs, cp in reply[0]]
+        return set() if refused else _state_bits(reply[0])
+    except (IndexError, ValueError, TypeError):
+        return {"name": "", "role": -1, "children": [], "states": set()}[key]
 
 
 def find_elements(
@@ -596,10 +711,10 @@ def find_elements(
     for svc, path in walk:
         if len(results) >= max_results:
             break
-        nm = _name(bus, svc, path)
+        nm = walk.name((svc, path))
         if (needle and needle not in nm.lower()) or (svc, path) in seen:
             continue
-        role_num = _role_num(bus, svc, path)  # also gates the value read below
+        role_num = walk.role((svc, path))  # also gates the value read below
         if needle and role_num == _LABEL_ROLE:
             # a name search: the field this label names (GTK's entries are
             # unnamed text, named only by the label beside them)
@@ -686,11 +801,11 @@ def focused_role(
     Bounded because it runs before typing: a fast, best-effort check for the
     auth guard, not an exhaustive walk. Prunes into non-showing subtrees so
     it does not spend the budget on hidden pages."""
-    walk = _Walk(bus, (app_svc, app_path), max_nodes)
+    walk = _Walk(bus, (app_svc, app_path), max_nodes, fields=("role", "states"))
     for svc, path in walk:
-        states = _states(bus, svc, path)
+        states = walk.states((svc, path))
         if _STATE_FOCUSED in states:
-            return _role_num(bus, svc, path)
+            return walk.role((svc, path))
         if _STATE_SHOWING not in states and (svc, path) != (app_svc, app_path):
             walk.skip()
     return None
@@ -792,9 +907,10 @@ def focused_text(
     in this window when it is a text field (password fields included, so a
     caller can refuse them), else None. Walks every child within the
     budget: a hidden window's subtree may not report SHOWING."""
-    for svc, path in _Walk(bus, (app_svc, app_path), max_nodes):
-        if _STATE_FOCUSED in _states(bus, svc, path):
-            role = _role_num(bus, svc, path)
+    walk = _Walk(bus, (app_svc, app_path), max_nodes, fields=("role", "states"))
+    for svc, path in walk:
+        if _STATE_FOCUSED in walk.states((svc, path)):
+            role = walk.role((svc, path))
             return (svc, path, role) if role in _TEXT_ROLES | {PASSWORD_ROLE} else None
     return None
 
@@ -808,10 +924,10 @@ def editable_fields(
     caller uses this when focused_text finds nothing: a window with exactly
     one field has one place for text, which a walk cut short cannot show."""
     out: list[tuple[str, str, int]] = []
-    walk = _Walk(bus, (app_svc, app_path), max_nodes)
+    walk = _Walk(bus, (app_svc, app_path), max_nodes, fields=("role", "states"))
     for svc, path in walk:
-        role = _role_num(bus, svc, path)
-        if role in _TEXT_ROLES | {PASSWORD_ROLE} and _STATE_EDITABLE in _states(bus, svc, path):
+        role = walk.role((svc, path))
+        if role in _TEXT_ROLES | {PASSWORD_ROLE} and _STATE_EDITABLE in walk.states((svc, path)):
             out.append((svc, path, role))
     return out, not walk.truncated
 

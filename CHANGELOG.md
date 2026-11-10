@@ -8,6 +8,14 @@ All notable changes to this project are documented here. The format follows
 
 ### Changed
 
+- `ui`, `marks`, `click_ui` and the checks before typing read an app's
+  accessibility tree several times faster: about 5 times on a GTK 3 list of
+  4,500 objects and about 2 times on GTK 4 and Qt 6 windows, with the same
+  results. The walk asks for the next objects' names, roles and children
+  in batches, one round trip each, and the D-Bus client reads and writes
+  its messages without the generic codec. It does not use the toolkit's
+  AT-SPI cache: GTK 4's can list a hidden widget where a newly shown
+  password field is, so every check reads the live tree.
 - The Claude Code plugin runs hypruse from its own copy of the source with
   `uv run --locked`, using the dependency versions in the committed
   `uv.lock`. Anthropic's plugin directory refuses a PyPI version pin like

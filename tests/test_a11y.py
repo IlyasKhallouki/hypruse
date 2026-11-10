@@ -90,8 +90,18 @@ class FakeBus:
         self.pids = pids or {}
         self.toolkits = toolkits or {}
 
+    cache = None  # a list of AT-SPI cache items, for a toolkit that keeps one
+
     def call(self, svc, path, iface, method, *sig):
+        if method == "GetItems":
+            if self.cache is None:  # what GTK 3 and an app without a cache answer
+                raise a11y.CallRefused("GetItems failed: UnknownMethod")
+            return [self.cache]
+        if (svc, path) not in self.nodes:  # the real bus refuses an unknown object
+            raise a11y.CallRefused(f"{method} failed: UnknownObject")
         node = self.nodes[(svc, path)]
+        if method == "Get":  # Properties.Get(iface, name), as Bus.prop sends it
+            return [self.prop(svc, path, sig[1], sig[2])]
         if method == "GetInterfaces":
             return [node.get("ifaces", [])]
         if method == "GetText":
@@ -133,6 +143,15 @@ class FakeBus:
             node["text"] = old[:pos] + text + old[pos:]
             return [True]
         raise AssertionError(method)
+
+    def call_many(self, calls):
+        out = []
+        for c in calls:
+            try:
+                out.append(self.call(*c))
+            except a11y.CallRefused as exc:
+                out.append(exc)
+        return out
 
     def prop(self, svc, path, iface, name):
         if name == "ToolkitName":
@@ -810,3 +829,116 @@ def test_one_dedicated_app_scope_is_the_same_app(monkeypatch):
 def test_unrelated_processes_are_not_the_same_app(monkeypatch):
     _procs(monkeypatch, ppid={5: 1, 6: 1})
     assert not a11y.same_app(5, 6) and not a11y.same_app(None, 6)
+
+
+# --- the walk's batches and the toolkit's cache ---------------------------------
+
+
+class _Counting(FakeBus):
+    """Counts round trips: a call is one, a batch of calls is one."""
+
+    def __init__(self, nodes):
+        super().__init__(nodes)
+        self.trips, self.single = 0, []
+
+    def call(self, svc, path, iface, method, *sig):
+        if not getattr(self, "_in_batch", False):
+            self.trips += 1
+            self.single.append(method)
+        return super().call(svc, path, iface, method, *sig)
+
+    def call_many(self, calls):
+        self.trips += 1
+        self._in_batch = True
+        try:
+            return super().call_many(calls)
+        finally:
+            self._in_batch = False
+
+
+def _wide(n):
+    """A frame with n plain buttons under the app root."""
+    nodes = {("app", "/root"): {"role": 75, "name": "app", "children": [("app", "/f")]},
+             ("app", "/f"): {"role": 23, "name": "frame",
+                             "children": [("app", f"/b{i}") for i in range(n)]}}
+    for i in range(n):
+        nodes[("app", f"/b{i}")] = {"role": 43, "name": f"B{i}", "extent": (i, 0, 10, 10),
+                                    "states": ALL_STATES, "children": []}
+    return nodes
+
+
+def test_the_walk_reads_its_objects_in_batches_not_one_call_each():
+    bus = _Counting(_wide(200))
+    seen = [(n, w) for w in [a11y._Walk(bus, ("app", "/root"), 1000)] for n in w]
+    assert len(seen) == 202
+    # name, role and children of 202 objects one call at a time would be 606
+    # round trips; in batches of up to 64 objects, about a dozen
+    assert bus.trips <= 12, bus.trips
+
+
+def test_a_batched_walk_finds_what_a_call_by_call_walk_finds():
+    nodes = _wide(150)
+    batched, _ = a11y.find_elements(FakeBus(nodes), "app", "/root", max_results=500)
+    one_by_one = []
+    for svc, path in [("app", f"/b{i}") for i in range(150)]:  # document order
+        one_by_one.append(a11y._name(FakeBus(nodes), svc, path))
+    assert [e["name"] for e in batched] == one_by_one
+
+
+def test_skip_and_the_budget_behave_as_before_with_batches():
+    bus = FakeBus(_wide(10))
+    walk = a11y._Walk(bus, ("app", "/root"), 5)
+    out = []
+    for node in walk:
+        out.append(node)
+    assert len(out) == 5 and walk.truncated
+    walk = a11y._Walk(bus, ("app", "/root"), 100)
+    out = []
+    for node in walk:
+        out.append(node)
+        if node == ("app", "/f"):
+            walk.skip()  # its children are not walked
+    assert out == [("app", "/root"), ("app", "/f")] and not walk.truncated
+
+
+def test_a_refused_object_in_a_batch_reads_as_absence_like_one_call_does():
+    nodes = _wide(3)
+    nodes[("app", "/f")]["children"].append(("app", "/gone"))  # listed, but not there
+    walk = a11y._Walk(FakeBus(nodes), ("app", "/root"), 100)
+    seen = list(walk)
+    assert ("app", "/gone") in seen
+    assert walk.name(("app", "/gone")) == "" and walk.role(("app", "/gone")) == -1
+    assert walk.children(("app", "/gone")) == []
+
+
+def test_the_walk_trusts_live_children_not_a_stale_toolkit_cache():
+    # GTK 4 keeps a hidden widget it once realized in its AT-SPI cache and
+    # leaves out a newly shown one it has not, with the counts still
+    # matching. A sign-in page swaps its email field for a password field:
+    # the walk must find the password field the live tree shows.
+    R, W, B = ("app", "/root"), ("app", "/win"), ("app", "/box")
+    EMAIL, PW, NEXT = ("app", "/email"), ("app", "/pw"), ("app", "/next")
+    nodes = {
+        R: {"role": 75, "name": "app", "children": [W]},
+        W: {"role": 23, "name": "Sign in", "children": [B]},
+        B: {"role": 39, "name": "", "children": [PW, NEXT]},  # live: email hidden, pw shown
+        EMAIL: {"role": 79, "name": "Email", "states": {7, 25, 30}, "children": []},
+        PW: {"role": 40, "name": "Password", "states": {7, 25, 30}, "children": []},
+        NEXT: {"role": 43, "name": "Next", "children": []},
+    }
+    bus = _Counting(nodes)
+    bus.cache = [  # the stale cache: email where pw now is, child count 2 matching
+        [list(n), list(R), list(p), i, c, [], nodes[n]["name"], nodes[n]["role"], "", [0, 0]]
+        for n, p, i, c in ((R, ("app", "/"), 0, 1), (W, R, 0, 1), (B, W, 0, 2),
+                           (EMAIL, B, 0, 0), (NEXT, B, 1, 0))]
+    assert a11y.editable_fields(bus, *R) == ([("app", "/pw", 40)], True)
+    assert "GetItems" not in bus.single
+
+
+def test_a_safety_walk_does_not_ask_for_names():
+    bus = _Counting(_wide(30))
+    calls = []
+    orig = bus.call_many
+    bus.call_many = lambda cs: calls.extend(c[3] for c in cs) or orig(cs)
+    a11y.editable_fields(bus, "app", "/root")
+    assert "Get" not in calls and {"GetRole", "GetChildren", "GetState"} <= set(calls)
