@@ -190,6 +190,8 @@ class _Reader:
 
 def marshal(sig: str, args: list[Any] | tuple[Any, ...]) -> bytes:
     """The body bytes for these arguments (a body starts 8-aligned)."""
+    if not sig and not args:
+        return b""  # most of a walk's calls take no arguments
     types = _split(sig)
     if len(types) != len(args):
         raise DBusError(f"signature {sig!r} takes {len(types)} arguments, got {len(args)}")
@@ -266,25 +268,37 @@ def _body_a_so(data: bytes, off: int) -> list[Any]:
 _FAST_BODIES = {"u": _body_u, "s": _body_s, "v": _body_v, "a(so)": _body_a_so}
 
 
+def _field(code: int, value: str) -> bytes:
+    """One header field struct (code, then the value as a variant), encoded
+    from an 8-aligned start. Every field starts 8-aligned, and the string
+    length after the 4 bytes of code and variant signature is then 4-aligned
+    too, so the bytes do not depend on where the field sits."""
+    data = value.encode()
+    if code == _SIGNATURE:
+        return bytes((code, 1)) + b"g\0" + bytes((len(data),)) + data + b"\0"
+    return bytes((code, 1)) + _FIELD_SIG[code] + b"\0" + _U32.pack(len(data)) + data + b"\0"
+
+
+# the destination, interface, member and signature repeat across a walk's
+# thousands of calls; only the object path is new each time
+_field_cached = functools.lru_cache(maxsize=1024)(_field)
+_HEAD = struct.Struct("<4sIII")
+_CALL = b"l" + bytes((_METHOD_CALL, 0, 1))
+
+
 def _call_header(serial: int, body_len: int, dest: str, path: str, iface: str,
                  member: str, sig: str) -> bytes:
     """A method call's header, padded to 8: the bytes _Writer.put("a(yv)")
     writes for these fields, in the same order."""
+    parts = [_field(_PATH, path), _field_cached(_INTERFACE, iface),
+             _field_cached(_MEMBER, member), _field_cached(_DESTINATION, dest)]
+    if sig:
+        parts.append(_field_cached(_SIGNATURE, sig))
     fields = bytearray()
-    for code, value in ((_PATH, path), (_INTERFACE, iface), (_MEMBER, member),
-                        (_DESTINATION, dest), (_SIGNATURE, sig)):
-        if code == _SIGNATURE and not value:
-            continue
+    for part in parts:
         fields += b"\0" * (-len(fields) % 8)  # each field struct, counted from offset 16
-        data = value.encode()
-        if code == _SIGNATURE:
-            fields += bytes([code, 1]) + b"g\0" + bytes([len(data)]) + data + b"\0"
-        else:
-            fields += bytes([code, 1]) + _FIELD_SIG[code] + b"\0"
-            fields += b"\0" * (-(16 + len(fields)) % 4)
-            fields += _U32.pack(len(data)) + data + b"\0"
-    head = (b"l" + bytes([_METHOD_CALL, 0, 1]) + struct.pack("<III", body_len, serial, len(fields))
-            + bytes(fields))
+        fields += part
+    head = _HEAD.pack(_CALL, body_len, serial, len(fields)) + fields
     return head + b"\0" * (-len(head) % 8)
 
 

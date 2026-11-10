@@ -228,8 +228,11 @@ class Bus:
             return out
         batch = []
         for svc, path, iface, method, *sig_args in calls:
-            sig, args = (sig_args[0], tuple(sig_args[1:])) if sig_args else ("", ())
-            batch.append((svc, path, iface, method, sig, tuple(_typed(sig, args))))
+            if sig_args:
+                sig = sig_args[0]
+                batch.append((svc, path, iface, method, sig, tuple(_typed(sig, sig_args[1:]))))
+            else:
+                batch.append((svc, path, iface, method, "", ()))
         try:
             replies = wire.call_many(batch)
         except dbuswire.DBusError as exc:
