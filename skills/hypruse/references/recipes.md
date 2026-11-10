@@ -348,7 +348,7 @@ and Electron/Chrome started without `--force-renderer-accessibility` expose
 little or nothing. Fall back to `screenshot --window`, `zoom`, `pointer`
 (recipe 2). A tree that exists but prints `no actionable elements` may still
 hold what you need under `ui --all` or a `--name` filter. A huge tree says
-it stopped after reading 2000 elements, and `--name` reads the same ones,
+it stopped after reading 6000 elements, and `--name` reads the same ones,
 so it does not get further. `busctl` missing or no AT-SPI bus reads as
 `accessibility read failed: ...`; tell the owner.
 

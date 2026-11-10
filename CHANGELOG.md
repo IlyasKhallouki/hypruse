@@ -9,13 +9,19 @@ All notable changes to this project are documented here. The format follows
 ### Changed
 
 - `ui`, `marks`, `click_ui` and the checks before typing read an app's
-  accessibility tree several times faster: about 5 times on a GTK 3 list of
-  4,500 objects and about 2 times on GTK 4 and Qt 6 windows, with the same
-  results. The walk asks for the next objects' names, roles and children
-  in batches, one round trip each, and the D-Bus client reads and writes
-  its messages without the generic codec. It does not use the toolkit's
-  AT-SPI cache: GTK 4's can list a hidden widget where a newly shown
-  password field is, so every check reads the live tree.
+  accessibility tree 3 to 6 times faster than 0.14.1, with the same
+  results. Reading a whole tree took 4.66 s and now takes 0.93 s on a GTK 3
+  list of 4,500 objects, 0.49 s and now 0.18 s on a GTK 4 window, and
+  0.49 s and now 0.085 s on a Qt 6 one. The walk asks for the next
+  objects' names, roles and children in batches, one round trip each; the
+  details of the controls it returns (states, position, role name, value)
+  come in batches too; and the D-Bus client reads and writes its messages
+  without the generic codec. It does not use the toolkit's AT-SPI cache:
+  GTK 4's can list a hidden widget where a newly shown password field is,
+  so every check reads the live tree.
+- A walk reads up to 6000 elements, up from 2000, so a large list is read
+  to its end and `ui` finds the controls after it. The checks before typing
+  see three times as much of a large app.
 - The Claude Code plugin runs hypruse from its own copy of the source with
   `uv run --locked`, using the dependency versions in the committed
   `uv.lock`. Anthropic's plugin directory refuses a PyPI version pin like
@@ -23,6 +29,11 @@ All notable changes to this project are documented here. The format follows
 - `uv.lock` moves to mcp 2.3.0, so plugin users run the current SDK. CI
   checks that the lock matches `pyproject.toml` and also tests the oldest
   mcp 1 hypruse allows.
+
+### Fixed
+
+- A slider or spin button that reports NaN or infinity no longer fails
+  `ui` and `click_ui`; it is listed without a percent.
 
 ### Added
 

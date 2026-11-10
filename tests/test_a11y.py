@@ -942,3 +942,129 @@ def test_a_safety_walk_does_not_ask_for_names():
     bus.call_many = lambda cs: calls.extend(c[3] for c in cs) or orig(cs)
     a11y.editable_fields(bus, "app", "/root")
     assert "Get" not in calls and {"GetRole", "GetChildren", "GetState"} <= set(calls)
+
+
+# --- result details read in batches ---------------------------------------------
+
+
+def _mixed():
+    """Every kind of record find_elements builds, and the ways a read fails."""
+    n = {}
+
+    def add(key, **d):
+        n[("app", key)] = {"children": [], "extent": (5, 5, 20, 10), "states": ALL_STATES, **d}
+
+    add("/btn", role=43, name="OK", role_name="push button")
+    add("/check", role=7, name="Agree", states=ALL_STATES | {4})
+    add("/toggle", role=62, name="Bold", states=ALL_STATES | {20})
+    add("/text", role=79, name="Note", ifaces=["org.a11y.atspi.Text"], text="hello",
+        states=ALL_STATES | {7})
+    add("/long", role=61, name="Doc", ifaces=["org.a11y.atspi.Text"], text="x" * 250)
+    add("/empty", role=79, name="Empty", ifaces=["org.a11y.atspi.Text"], text="")
+    add("/notext", role=79, name="No iface", ifaces=[])
+    add("/slider", role=51, name="Volume", ifaces=["org.a11y.atspi.Value"], cur=33.0,
+        min=0.0, max=66.0)
+    add("/flat", role=52, name="Spin", ifaces=["org.a11y.atspi.Value"], cur=3.0, min=1.0,
+        max=1.0)
+    add("/novalue", role=51, name="No value", ifaces=[])
+    add("/ak", role=43, name="AccessKit", role_name=None)  # no GetRoleName
+    add("/flatbox", role=43, name="Zero size", extent=(5, 5, 0, 10))
+    add("/far", role=43, name="Wild", extent=(99999, 5, 10, 10))
+    add("/noext", role=43, name="No extents", extent=None)
+    add("/pw", role=40, name="Password", states=ALL_STATES | {7})
+    nodes = dict(n)
+    nodes[("app", "/root")] = {"role": 75, "name": "app", "children": list(n)}
+    return nodes
+
+
+def test_batched_records_are_the_records_element_builds():
+    nodes = _mixed()
+    bus = FakeBus(nodes)
+    cands = [(s, p, d["role"], d["name"]) for (s, p), d in nodes.items() if p != "/root"]
+    batched = a11y._elements(bus, cands)
+    one_by_one = [a11y._element(bus, s, p, r, nm, actionable=False) for s, p, r, nm in cands]
+    assert [None if b is None else list(b.items()) for b in batched] == \
+        [None if o is None else list(o.items()) for o in one_by_one]  # key order too
+    by_path = {c[1]: b for c, b in zip(cands, batched, strict=True)}
+    assert by_path["/long"]["value"].endswith("...") and by_path["/empty"]["value"] == ""
+    assert by_path["/slider"]["percent"] == 50 and "percent" not in by_path["/flat"]
+    assert by_path["/ak"]["role"] == "button"  # named from the role number, as libatspi does
+    assert by_path["/noext"] is None and by_path["/far"] is None and by_path["/flatbox"] is None
+    assert by_path["/pw"]["field"] is True and "value" not in by_path["/pw"]  # never read
+
+
+def test_find_elements_builds_its_results_in_a_few_round_trips():
+    bus = _Counting(_wide(120))
+    els, _ = a11y.find_elements(bus, "app", "/root", max_results=500)
+    assert len(els) == 120
+    # 3 detail calls for each of 120 results would be 360 round trips alone
+    assert bus.trips <= 12, bus.trips
+
+
+def test_results_keep_walk_order_and_the_cap_around_a_label_found_field():
+    # a name search: a direct match, then a label naming an unnamed field,
+    # then another direct match; the label's field takes its place in order
+    R, F = ("app", "/root"), ("app", "/f")
+    A, LAB, FLD, B = ("app", "/a"), ("app", "/lab"), ("app", "/fld"), ("app", "/b")
+    nodes = {
+        R: {"role": 75, "name": "app", "children": [F]},
+        F: {"role": 23, "name": "frame", "children": [A, LAB, B, FLD]},
+        A: {"role": 43, "name": "Find next", "extent": (1, 1, 5, 5), "states": ALL_STATES,
+            "children": []},
+        LAB: {"role": 29, "name": "Find", "relations": [(1, [FLD])], "children": []},
+        B: {"role": 43, "name": "Find all", "extent": (2, 2, 5, 5), "states": ALL_STATES,
+            "children": []},
+        FLD: {"role": 79, "name": "", "extent": (3, 3, 50, 9), "states": ALL_STATES | {7},
+              "ifaces": [], "children": []},
+    }
+    els, _ = a11y.find_elements(FakeBus(nodes), *R, name="find")
+    assert [e["path"] for e in els] == ["/a", "/fld", "/b"]  # the field once, in label order
+    els, _ = a11y.find_elements(FakeBus(nodes), *R, name="find", max_results=1)
+    assert [e["path"] for e in els] == ["/a"]
+    els, _ = a11y.find_elements(FakeBus(nodes), *R, name="find", max_results=2)
+    assert [e["path"] for e in els] == ["/a", "/fld"]
+
+
+def test_the_walk_stops_at_the_cap_and_reads_no_result_past_it():
+    # 61 buttons, then a long unnamed tail: reading one at a time stopped
+    # after the 60th; the batches must not read on past it
+    nodes = _wide(61)
+    for i in range(3000):
+        nodes[("app", "/f")]["children"].append(("app", f"/u{i}"))
+        nodes[("app", f"/u{i}")] = {"role": 73, "name": "", "children": []}
+    bus = FakeBus(nodes)
+    calls = []
+    orig = bus.call_many
+    bus.call_many = lambda cs: calls.extend(cs) or orig(cs)
+    els, truncated = a11y.find_elements(bus, "app", "/root", max_results=60)
+    assert len(els) == 60 and not truncated
+    assert len(calls) < 450, len(calls)  # one at a time read 66 objects, 378 calls
+
+
+def test_an_element_past_the_cap_is_never_read():
+    nodes = _wide(3)
+    nodes[("app", "/f")]["children"].append(("app", "/nan"))
+    nodes[("app", "/nan")] = {"role": 51, "name": "Bad", "extent": (1, 1, 5, 5),
+                              "states": ALL_STATES, "ifaces": ["org.a11y.atspi.Value"],
+                              "cur": float("nan"), "min": 0.0, "max": 1.0, "children": []}
+    bus = FakeBus(nodes)
+    detail = []  # the reads that build a result, not the walk's own
+    orig = bus.call_many
+    bus.call_many = lambda cs: detail.extend(
+        c[1] for c in cs if c[3] in ("GetExtents", "GetInterfaces", "Get") and c[-1] != "Name"
+    ) or orig(cs)
+    els, _ = a11y.find_elements(bus, "app", "/root", max_results=3)  # NaN would raise if read
+    assert [e["name"] for e in els] == ["B0", "B1", "B2"]
+    assert "/nan" not in detail
+
+
+@pytest.mark.parametrize("cur, low, high", [(float("nan"), 0.0, 1.0), (float("inf"), 0.0, 1.0),
+                                            (0.5, float("-inf"), float("inf"))])
+def test_a_slider_reporting_nan_or_infinity_gives_no_percent_instead_of_failing(cur, low, high):
+    nodes = _wide(1)
+    nodes[("app", "/b0")].update(role=51, ifaces=["org.a11y.atspi.Value"], cur=cur, min=low,
+                                 max=high)
+    bus = FakeBus(nodes)
+    batched = a11y._elements(bus, [("app", "/b0", 51, "B0")])[0]
+    single = a11y._element(bus, "app", "/b0", 51, "B0", actionable=False)
+    assert "percent" not in batched and list(batched.items()) == list(single.items())

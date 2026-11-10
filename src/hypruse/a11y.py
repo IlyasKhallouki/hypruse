@@ -17,6 +17,7 @@ the server does the correlation and mapping.
 from __future__ import annotations
 
 import json
+import math
 import shutil
 import subprocess
 from typing import Any
@@ -461,8 +462,18 @@ def _role_num(bus: Bus, svc: str, path: str) -> int:
 
 def _role_name(bus: Bus, svc: str, path: str, role_num: int) -> str:
     try:
-        name = str(bus.call(svc, path, _ACCESSIBLE, "GetRoleName")[0])
-    except (CallRefused, IndexError):
+        reply: Any = bus.call(svc, path, _ACCESSIBLE, "GetRoleName")
+    except CallRefused as exc:
+        reply = exc
+    return _role_name_from(reply, role_num)
+
+
+def _role_name_from(reply: Any, role_num: int) -> str:
+    """A GetRoleName reply (or its CallRefused), named from the role number
+    when the toolkit gives none (AccessKit has no GetRoleName)."""
+    try:
+        name = "" if isinstance(reply, CallRefused) else str(reply[0])
+    except IndexError:
         name = ""
     if name or not 0 <= role_num < len(_ROLE_NAMES):
         return name
@@ -483,9 +494,20 @@ def _window_extents(bus: Bus, svc: str, path: str) -> tuple[int, int, int, int] 
     unrendered tab page report absurd origins), and those must not be
     offered as click targets."""
     try:
-        x, y, w, h = bus.call(svc, path, _COMPONENT, "GetExtents", "u", str(COORD_WINDOW))[0]
+        reply: Any = bus.call(svc, path, _COMPONENT, "GetExtents", "u", str(COORD_WINDOW))
+    except CallRefused as exc:
+        reply = exc
+    return _extents_from(reply)
+
+
+def _extents_from(reply: Any) -> tuple[int, int, int, int] | None:
+    """A GetExtents reply (or its CallRefused) read as _window_extents reads it."""
+    try:
+        if isinstance(reply, CallRefused):
+            return None
+        x, y, w, h = reply[0]
         x, y, w, h = int(x), int(y), int(w), int(h)
-    except (CallRefused, IndexError, ValueError):
+    except (IndexError, ValueError, TypeError):
         return None
     if w <= 0 or h <= 0:
         return None
@@ -511,8 +533,18 @@ def _interfaces(bus: Bus, svc: str, path: str) -> set[str]:
     """Short interface names the object supports, so Text/Value are only
     called where they exist (calling them blind raises UnknownMethod)."""
     try:
-        return {i.rsplit(".", 1)[-1] for i in bus.call(svc, path, _ACCESSIBLE, "GetInterfaces")[0]}
-    except (CallRefused, IndexError, TypeError):
+        reply: Any = bus.call(svc, path, _ACCESSIBLE, "GetInterfaces")
+    except CallRefused as exc:
+        reply = exc
+    return _interfaces_from(reply)
+
+
+def _interfaces_from(reply: Any) -> set[str]:
+    try:
+        if isinstance(reply, CallRefused):
+            return set()
+        return {i.rsplit(".", 1)[-1] for i in reply[0]}
+    except (IndexError, TypeError, AttributeError):
         return set()
 
 
@@ -550,9 +582,16 @@ def element_value(bus: Bus, svc: str, path: str, role: int, states: set[int]) ->
             return {}
         out: dict[str, Any] = {"value": current}
         if high > low:  # raw units are toolkit-specific; a percent is readable
-            out["percent"] = round((current - low) / (high - low) * 100)
+            out.update(_percent(current, low, high))
         return out
     return {}
+
+
+def _percent(current: float, low: float, high: float) -> dict[str, int]:
+    """Where a value sits in its range, or nothing when the toolkit reports
+    NaN or infinity (round() raises on them, which failed the whole read)."""
+    pct = (current - low) / (high - low) * 100
+    return {"percent": round(pct)} if math.isfinite(pct) else {}
 
 
 def _clickable_now(states: set[int]) -> bool:
@@ -565,8 +604,12 @@ def _clickable_now(states: set[int]) -> bool:
     return _STATE_SENSITIVE in states or _STATE_ENABLED in states
 
 
-# How many elements one walk of a window reads before it stops
-WALK_BUDGET = 2000
+# How many elements one walk of a window reads before it stops. Reading in
+# batches made a walk about 5 times faster on a wide tree (a GTK 3 list) and
+# about 2 times on a deep one (GTK 4, Qt 6), so a full walk of 6000 takes
+# about what 2000 took before on a wide tree and up to twice it on a deep
+# one, while the checks before typing see three times as much of an app.
+WALK_BUDGET = 6000
 
 
 _PROPERTIES = "org.freedesktop.DBus.Properties"
@@ -710,6 +753,18 @@ def find_elements(
     results: list[dict[str, Any]] = []
     fallback: list[dict[str, Any]] = []  # named, with an action, in a role not listed
     seen: set[tuple[str, str]] = set()  # a field found through its label is not listed twice
+    # elements the main path will build, in walk order, built a batch at a
+    # time: a result's states, extents, role name and value in one round
+    # trip with the others' instead of one call after another
+    pending: list[tuple[str, str, int, str]] = []
+
+    def flush() -> None:
+        for (svc, path, _r, _n), item in zip(pending, _elements(bus, pending), strict=True):
+            if item is not None and len(results) < max_results:
+                seen.add((svc, path))
+                results.append(item)
+        pending.clear()
+
     walk = _Walk(bus, (app_svc, app_path), max_nodes)
     for svc, path in walk:
         if len(results) >= max_results:
@@ -720,7 +775,11 @@ def find_elements(
         role_num = walk.role((svc, path))  # also gates the value read below
         if needle and role_num == _LABEL_ROLE:
             # a name search: the field this label names (GTK's entries are
-            # unnamed text, named only by the label beside them)
+            # unnamed text, named only by the label beside them). The queue
+            # goes first, so results keep walk order and `seen` is current.
+            flush()
+            if len(results) >= max_results:
+                break
             for fs, fp in _related(bus, svc, path, _REL_LABEL_FOR):
                 if (fs, fp) in seen:
                     continue
@@ -748,12 +807,137 @@ def find_elements(
             # unnamed and valueless: nothing to target or report. An unnamed
             # slider or checkbox still carries a reading worth returning.
             continue
-        item = _element(bus, svc, path, role_num, nm, actionable=False)
-        if item is not None:
-            seen.add((svc, path))
-            results.append(item)
+        pending.append((svc, path, role_num, nm))
+        # never more queued than the cap has room for: when they all build,
+        # the walk stops where reading one at a time stopped
+        if len(pending) >= min(_ELEMENT_BATCH, max_results - len(results)):
+            flush()
+    flush()
     results = results or fallback
     return results, walk.truncated and len(results) < max_results
+
+
+_ELEMENT_BATCH = 32  # elements whose details one batch of calls reads
+
+
+def _elements(bus: Bus, cands: list[tuple[str, str, int, str]]) -> list[dict[str, Any] | None]:
+    """_element(..., actionable=False) for each (svc, path, role, name), its
+    calls batched: states, extents and role name in one round trip, then the
+    interfaces of the text and value elements, then their value reads. Each
+    reply is read by the same helpers the one-call path uses, so every record
+    is the one _element would build."""
+    if not cands:
+        return []
+    calls: list[tuple[str, ...]] = []
+    for svc, path, _role, _nm in cands:
+        calls += [(svc, path, _ACCESSIBLE, "GetState"),
+                  (svc, path, _COMPONENT, "GetExtents", "u", str(COORD_WINDOW)),
+                  (svc, path, _ACCESSIBLE, "GetRoleName")]
+    replies = bus.call_many(calls)
+    parts: list[tuple[set[int], tuple[int, int, int, int], str] | None] = []
+    for i, (_svc, _path, role, _nm) in enumerate(cands):
+        st, ext, rn = replies[3 * i:3 * i + 3]
+        extents = _extents_from(ext)
+        parts.append(None if extents is None else
+                     (_read("states", st), extents, _role_name_from(rn, role)))
+    values = _values_of(bus, [(i, cands[i], parts[i][0]) for i in range(len(cands))
+                              if parts[i] is not None])
+    out: list[dict[str, Any] | None] = []
+    for i, (svc, path, role, nm) in enumerate(cands):
+        part = parts[i]
+        if part is None:
+            out.append(None)
+            continue
+        states, extents, role_name = part
+        out.append({
+            "role": role_name,
+            "name": nm,
+            "extent": extents,
+            "clickable": _clickable_now(states),
+            **values[i],
+            "svc": svc,
+            "path": path,
+            "field": (role in _TEXT_ROLES or role == PASSWORD_ROLE) and _STATE_EDITABLE in states,
+        })
+    return out
+
+
+def _values_of(
+    bus: Bus, items: list[tuple[int, tuple[str, str, int, str], set[int]]]
+) -> dict[int, dict[str, Any]]:
+    """element_value for each (index, candidate, states), its calls batched
+    the same way: interfaces of the text and value elements in one round
+    trip, then CharacterCount or the three Value properties, then GetText."""
+    out: dict[int, dict[str, Any]] = {}
+    asked: list[tuple[int, str, str, int]] = []
+    for i, (svc, path, role, _nm), states in items:
+        if role in _CHECKABLE_ROLES:
+            out[i] = {"checked": _STATE_CHECKED in states or _STATE_PRESSED in states}
+        elif role in _TEXT_ROLES or role in _VALUE_ROLES:
+            asked.append((i, svc, path, role))
+        else:
+            out[i] = {}
+    if not asked:
+        return out
+    ifaces = bus.call_many([(svc, path, _ACCESSIBLE, "GetInterfaces")
+                            for _i, svc, path, _r in asked])
+    props: list[tuple[int, str, str, int]] = []
+    for (i, svc, path, role), reply in zip(asked, ifaces, strict=True):
+        if ("Text" if role in _TEXT_ROLES else "Value") in _interfaces_from(reply):
+            props.append((i, svc, path, role))
+        else:
+            out[i] = {}
+    calls: list[tuple[str, ...]] = []
+    for _i, svc, path, role in props:
+        if role in _TEXT_ROLES:
+            calls.append((svc, path, _PROPERTIES, "Get", "ss", _TEXT, "CharacterCount"))
+        else:
+            calls += [(svc, path, _PROPERTIES, "Get", "ss", _VALUE, name)
+                      for name in ("CurrentValue", "MinimumValue", "MaximumValue")]
+    replies = bus.call_many(calls)
+    texts: list[tuple[int, str, str, int, int]] = []  # (index, svc, path, count, end)
+    at = 0
+    for i, svc, path, role in props:
+        if role in _TEXT_ROLES:
+            reply = replies[at]
+            at += 1
+            try:
+                if isinstance(reply, CallRefused):
+                    raise reply
+                count = int(reply[0])
+            except (CallRefused, IndexError, ValueError, TypeError):
+                out[i] = {}
+                continue
+            if count <= 0:
+                out[i] = {"value": ""}
+            else:
+                texts.append((i, svc, path, count, min(count, _MAX_TEXT)))
+        else:
+            cur, low, high = replies[at:at + 3]
+            at += 3
+            try:
+                if any(isinstance(r, CallRefused) for r in (cur, low, high)):
+                    raise CallRefused("a Value property")
+                current, lo, hi = float(cur[0]), float(low[0]), float(high[0])
+            except (CallRefused, IndexError, ValueError, TypeError):
+                out[i] = {}
+                continue
+            value: dict[str, Any] = {"value": current}
+            if hi > lo:  # raw units are toolkit-specific; a percent is readable
+                value.update(_percent(current, lo, hi))
+            out[i] = value
+    got = bus.call_many([(svc, path, _TEXT, "GetText", "ii", "0", str(end))
+                         for _i, svc, path, _c, end in texts])
+    for (i, _svc, _path, count, end), reply in zip(texts, got, strict=True):
+        try:
+            if isinstance(reply, CallRefused):
+                raise reply
+            text = str(reply[0])
+        except (CallRefused, IndexError, ValueError, TypeError):
+            out[i] = {}
+            continue
+        out[i] = {"value": text + ("..." if count > end else "")}
+    return out
 
 
 def _related(bus: Bus, svc: str, path: str, rel_type: int) -> list[tuple[str, str]]:

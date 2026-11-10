@@ -205,7 +205,7 @@ an entry or a spinner's number, `percent` a slider's position, `checked` a
 box or toggle. Password fields never report contents and many dropdowns
 expose no value, so screenshot when a rendered value matters. Indices go
 stale after any change; re-read before using one. A very large tree stops
-after 2000 elements and says so; a name filter reads the same elements, so
+after 6000 elements and says so; a name filter reads the same elements, so
 it does not get further. When no control matches a name, a named element
 of another role that has an accessibility action (a web app's list row) is
 listed with that action's name, as `action=`.
