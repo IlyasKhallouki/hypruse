@@ -4,7 +4,7 @@
 
 **Your AI agent works in apps on its own Hyprland workspaces while you keep working on yours.** hypruse is an [MCP](https://modelcontextprotocol.io) server, a set of shell verbs and an agent skill that give an agent the desktop you already have: the window tree, screenshots, clicks on controls by name, a mouse and a keyboard. It runs on stock [Hyprland](https://hypr.land) and on Omarchy, with no compositor plugin, no root, no portals, no ydotool daemon and no X11.
 
-![An animation: you keep typing notes on workspace 1 and ask your agent to turn on Do Not Disturb and set the volume to 30%; the agent opens Settings on its own workspace 99, out of your sight, flips the toggle and moves the slider through the accessibility tree while your cursor and focus stay untouched, then reports back](https://raw.githubusercontent.com/IlyasKhallouki/hypruse/main/assets/demo.gif)
+![An animation: you keep typing notes on workspace 1 and ask your agent to turn on Do Not Disturb and set your status to Heads down; the agent opens Settings on its own workspace 99, out of your sight, ticks the box and types the status through the accessibility tree while your cursor and focus stay untouched, then reports back](https://raw.githubusercontent.com/IlyasKhallouki/hypruse/main/assets/demo.gif)
 
 ## Quick start
 
