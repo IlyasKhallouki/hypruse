@@ -1,6 +1,6 @@
 {
   "name": "hypruse",
-  "version": "0.14.1",
+  "version": "0.15.0",
   "description": "Computer use on Linux with Hyprland: Claude reads the window tree over IPC, takes screenshots, clicks controls by name through the accessibility tree, and drives the pointer and keyboard, with the skill that teaches the workflow. The server runs on your machine from the plugin's own source; on first start uv installs the dependency versions locked in uv.lock from PyPI, and after that it makes no network connections.",
   "author": {
     "name": "Ilyas Khallouki",

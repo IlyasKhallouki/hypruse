@@ -6,6 +6,8 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.15.0] - 2026-11-10
+
 ### Changed
 
 - `ui`, `marks`, `click_ui` and the checks before typing read an app's

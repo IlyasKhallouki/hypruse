@@ -28,7 +28,14 @@ accounts/credentials; the rest is automated.
    `uv run --locked` from its own source, so a lock that doesn't match
    `pyproject.toml` stops it starting (CI runs `uv lock --check`). Move the
    CHANGELOG `[Unreleased]` entries under the new version.
-2. Tag and push the tag, not `main` yet:
+2. Push `main` and wait for CI to pass on it:
+   ```sh
+   git push origin main
+   gh run list --branch main --limit 1
+   ```
+   The plugin's own marketplace reads `main`, and the plugin runs its own
+   source with the locked dependencies, so nothing on `main` waits on PyPI.
+3. Tag and push the tag:
    ```sh
    git tag -a v0.1.0 -m "v0.1.0"
    git push origin v0.1.0
@@ -36,19 +43,10 @@ accounts/credentials; the rest is automated.
    The `release` workflow builds, publishes to PyPI via OIDC, publishes
    `server.json` to the MCP registry (also OIDC, after waiting for the
    release to land on PyPI), and cuts a GitHub release with the artifacts.
-3. Verify: `uvx hypruse==0.1.0 --version`, and the registry entry:
+4. Verify: `uvx hypruse==0.1.0 --version`, and the registry entry:
    ```sh
    curl "https://registry.modelcontextprotocol.io/v0.1/servers?search=io.github.IlyasKhallouki/hypruse"
    ```
-4. Push `main`. The plugin's own marketplace and Anthropic's directory
-   read `main`, and the plugin runs its own source with the locked
-   dependencies, so it doesn't wait on PyPI.
-   ```sh
-   git push origin main
-   ```
-   Anthropic's directory then scans the new commit and holds it for a
-   reviewer (a server whose dependencies install at runtime is always held), so check the plugin's
-   page at https://claude.ai/directory/manage after a release.
 
 ## AUR
 
