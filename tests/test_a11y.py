@@ -104,6 +104,8 @@ class FakeBus:
             return [self.prop(svc, path, sig[1], sig[2])]
         if method == "GetInterfaces":
             return [node.get("ifaces", [])]
+        if method == "GetAttributes":
+            return [node.get("attrs", {})]
         if method == "GetText":
             start, end = int(sig[1]), int(sig[2])  # sig = (signature, start, end)
             return [node.get("text", "")[start:end]]
@@ -999,6 +1001,87 @@ def test_find_elements_builds_its_results_in_a_few_round_trips():
     assert len(els) == 120
     # 3 detail calls for each of 120 results would be 360 round trips alone
     assert bus.trips <= 12, bus.trips
+
+
+def test_editable_text_states_are_batched_without_reading_passwords():
+    nodes = _wide(120)
+    for i in range(120):
+        nodes[("app", f"/b{i}")].update(
+            role=61, states=ALL_STATES | {7}, ifaces=["org.a11y.atspi.Text"], text="hello")
+    nodes[("app", "/b119")].update(role=40, text="secret")
+    bus = _Counting(nodes)
+    elements, truncated = a11y.find_elements(bus, "app", "/root", max_results=500)
+    assert len(elements) == 120 and not truncated
+    assert all(e["field"] for e in elements)
+    assert elements[0]["value"] == "hello" and "value" not in elements[-1]
+    assert "GetState" not in bus.single
+    assert bus.trips < 30, bus.trips
+
+
+def _chromium_tree(scale=1.6):
+    root, host, doc, button, chrome = [("app", p) for p in
+                                     ("/root", "/host", "/doc", "/button", "/chrome")]
+    return {
+        root: {"role": 23, "name": "Browser", "children": [chrome, host]},
+        chrome: {"role": 43, "name": "Reload", "children": [],
+                 "extent": (10, 20, 30, 30), "states": ALL_STATES},
+        host: {"role": 39, "name": "", "children": [doc], "extent": (20, 80, 500, 400),
+               "attrs": {"class": "ContentsContainerView"}},
+        doc: {"role": 95, "name": "Page", "children": [button],
+              "extent": tuple(round(v * scale) for v in (20, 80, 500, 400))},
+        button: {"role": 43, "name": "Save", "children": [], "states": ALL_STATES,
+                 "extent": tuple(round(v * scale) for v in (60, 120, 100, 40))},
+    }
+
+
+@pytest.mark.parametrize("scale", [0.8, 1.0, 1.25, 1.6, 2.0])
+def test_chromium_web_bounds_become_logical_but_browser_chrome_stays_logical(scale):
+    bus = FakeBus(_chromium_tree(scale), toolkits={"app": "Chromium"})
+    elements, _ = a11y.find_elements(bus, "app", "/root")
+    assert [(e["name"], e["extent"]) for e in elements] == [
+        ("Reload", (10, 20, 30, 30)), ("Save", (60, 120, 100, 40))]
+    filtered, _ = a11y.find_elements(bus, "app", "/root", name="Save")
+    assert filtered == elements[1:]
+
+
+def test_nested_web_documents_inherit_one_conversion():
+    nodes = _chromium_tree()
+    nodes[("app", "/doc")]["children"] = [("app", "/iframe")]
+    nodes[("app", "/iframe")] = {"role": 95, "name": "Inner", "children": [("app", "/button")],
+                                 "extent": (64, 160, 400, 300)}
+    bus = FakeBus(nodes, toolkits={"app": "Chromium"})
+    elements, _ = a11y.find_elements(bus, "app", "/root", name="Save")
+    assert elements[0]["extent"] == (60, 120, 100, 40)
+
+
+def test_a_label_found_field_is_converted_even_when_the_result_cap_stops_the_walk():
+    nodes = _chromium_tree()
+    field = ("app", "/button")
+    nodes[field].update(role=79, name="", states=ALL_STATES | {7})
+    nodes[("app", "/doc")]["children"].insert(0, ("app", "/label"))
+    nodes[("app", "/label")] = {"role": 29, "name": "Save", "children": [],
+                                "relations": [(1, [field])]}
+    elements, _ = a11y.find_elements(FakeBus(nodes, toolkits={"app": "Chromium"}),
+                                     "app", "/root", name="Save", max_results=1)
+    assert len(elements) == 1 and elements[0]["extent"] == (60, 120, 100, 40)
+
+
+@pytest.mark.parametrize("toolkit", ["GTK", "Qt", "", "Chromium"])
+def test_unproven_document_scaling_is_left_alone(toolkit):
+    nodes = _chromium_tree()
+    if toolkit == "Chromium":
+        nodes[("app", "/host")]["attrs"] = {"tag": "iframe"}
+    bus = FakeBus(nodes, toolkits={"app": toolkit})
+    elements, _ = a11y.find_elements(bus, "app", "/root", name="Save")
+    assert elements[0]["extent"] == (96, 192, 160, 64)
+
+
+def test_document_size_mismatch_is_not_assumed_to_be_scaling():
+    nodes = _chromium_tree()
+    nodes[("app", "/doc")]["extent"] = (32, 128, 800, 900)
+    elements, _ = a11y.find_elements(FakeBus(nodes, toolkits={"app": "Chromium"}),
+                                     "app", "/root", name="Save")
+    assert elements[0]["extent"] == (96, 192, 160, 64)
 
 
 def test_results_keep_walk_order_and_the_cap_around_a_label_found_field():

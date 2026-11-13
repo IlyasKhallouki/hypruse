@@ -643,8 +643,11 @@ class _Walk:
     cached child list can hide a password field the live one shows."""
 
     def __init__(self, bus: Bus, root: tuple[str, str], max_nodes: int,
-                 fields: tuple[str, ...] = ("name", "role", "children")):
+                 fields: tuple[str, ...] = ("name", "role", "children"),
+                 state_roles: frozenset[int] = frozenset()):
         self._bus, self._root, self._max = bus, root, max_nodes
+        self._state_roles = state_roles
+        self.parents: dict[tuple[str, str], tuple[str, str]] = {}
         self._want = tuple(dict.fromkeys((*fields, "children")))  # the walk itself needs children
         self._info: dict[tuple[str, str], dict[str, Any]] = {}
         self._skip = False
@@ -690,6 +693,11 @@ class _Walk:
                 plan.append((node, key))
         for (node, key), reply in zip(plan, self._bus.call_many(calls), strict=True):
             self._info[node][key] = _read(key, reply)
+        if "role" in keys and self._state_roles:
+            text_nodes = [n for n in nodes if self._info[n].get("role") in self._state_roles
+                          and "states" not in self._info[n]]
+            if text_nodes:
+                self._fetch(text_nodes, ("states",))
 
     def __iter__(self):
         stack: list[tuple[str, str]] = [self._root]
@@ -714,7 +722,11 @@ class _Walk:
             self._skip = False
             yield node
             if not self._skip:  # reversed keeps document order under a LIFO stack
-                stack.extend(reversed(self.children(node)))
+                children = self.children(node)
+                for child in children:
+                    if child not in done:
+                        self.parents[child] = node
+                stack.extend(reversed(children))
 
 
 def _read(key: str, reply: Any) -> Any:
@@ -733,6 +745,33 @@ def _read(key: str, reply: Any) -> Any:
         return {"name": "", "role": -1, "children": [], "states": set()}[key]
 
 
+_ExtentTransform = tuple[int, int, int, int, float, float]
+
+
+def _document_transform(
+    bus: Bus, node: tuple[str, str], parent: tuple[str, str]
+) -> _ExtentTransform | None:
+    """Calibrate Chromium's physical-pixel web subtree against its logical
+    Views container. Browser chrome and GTK/Qt must keep their own units.
+    Compare both dimensions rather than assuming the monitor scale: newer
+    Chromium versions may already return logical web bounds."""
+    doc, host = _window_extents(bus, *node), _window_extents(bus, *parent)
+    if doc is None or host is None:
+        return None
+    px, py, pw, ph = doc
+    lx, ly, lw, lh = host
+    sx, sy = pw / lw, ph / lh
+    if abs(sx - 1) <= 0.01 or abs(sx - sy) > 2 / min(lw, lh):
+        return None
+    try:
+        attrs = bus.call(*parent, _ACCESSIBLE, "GetAttributes")[0]
+    except (CallRefused, IndexError):
+        return None
+    if not isinstance(attrs, dict) or not attrs.get("class") or "tag" in attrs:
+        return None  # an iframe's web parent is not a logical Views container
+    return px, py, lx, ly, sx, sy
+
+
 def find_elements(
     bus: Bus,
     app_svc: str,
@@ -743,8 +782,10 @@ def find_elements(
     max_results: int = 60,
 ) -> tuple[list[dict[str, Any]], bool]:
     """Depth-first over a window's subtree, returning (matching elements,
-    truncated). Elements carry WINDOW-relative extents (the caller adds the
-    window origin). Filters by `name` substring (case-insensitive) and, when
+    truncated). Elements carry logical WINDOW-relative extents (the caller
+    adds the window origin). Chromium web bounds are calibrated against
+    their native container; the toolkit's raw units stay inside this module.
+    Filters by `name` substring (case-insensitive) and, when
     `actionable`, to interactive roles. `truncated` is True when the walk hit
     the max_nodes budget before exhausting the tree, so the caller can tell
     'nothing there' from 'stopped early' instead of reporting a false
@@ -765,14 +806,26 @@ def find_elements(
                 results.append(item)
         pending.clear()
 
-    walk = _Walk(bus, (app_svc, app_path), max_nodes)
+    walk = _Walk(bus, (app_svc, app_path), max_nodes, state_roles=_TEXT_ROLES)
+    transforms: dict[tuple[str, str], _ExtentTransform] = {}
+    chromium = None
     for svc, path in walk:
         if len(results) >= max_results:
             break
+        node = (svc, path)
+        role_num = walk.role(node)  # also gates the value read below
+        parent = walk.parents.get(node)
+        transform = transforms.get(parent)
+        if role_num == 95 and parent is not None and transform is None:  # document web
+            if chromium is None:
+                chromium = toolkit(bus, app_svc)[0].lower() == "chromium"
+            if chromium:
+                transform = _document_transform(bus, node, parent)
+        if transform is not None:
+            transforms[node] = transform
         nm = walk.name((svc, path))
         if (needle and needle not in nm.lower()) or (svc, path) in seen:
             continue
-        role_num = walk.role((svc, path))  # also gates the value read below
         if needle and role_num == _LABEL_ROLE:
             # a name search: the field this label names (GTK's entries are
             # unnamed text, named only by the label beside them). The queue
@@ -789,7 +842,7 @@ def find_elements(
                     results.append(field)
             if actionable:
                 continue  # the label itself is not something to click
-        editable = role_num in _TEXT_ROLES and _STATE_EDITABLE in _states(bus, svc, path)
+        editable = role_num in _TEXT_ROLES and _STATE_EDITABLE in walk.states(node)
         if actionable and role_num not in ACTIONABLE_ROLE_NUMS and not editable:
             # a name can still find a control in a role the list leaves out (a
             # web app's list row or cell) when it has an action, but only when
@@ -814,6 +867,16 @@ def find_elements(
             flush()
     flush()
     results = results or fallback
+    for item in results:
+        node = (item["svc"], item["path"])
+        # A label relation can return a sibling field before the walk gets
+        # to it, including the last result before the cap stops traversal.
+        transform = transforms.get(node) or transforms.get(walk.parents.get(node))
+        if transform is not None:
+            px, py, lx, ly, sx, sy = transform
+            x, y, w, h = item["extent"]
+            item["extent"] = (round(lx + (x - px) / sx), round(ly + (y - py) / sy),
+                              max(1, round(w / sx)), max(1, round(h / sy)))
     return results, walk.truncated and len(results) < max_results
 
 
