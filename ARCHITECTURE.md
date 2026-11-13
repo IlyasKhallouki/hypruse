@@ -87,6 +87,13 @@ One space rules everything: **Hyprland global logical coordinates** (what
 
 - `desktop` reports window geometry in it.
 - `pointer` accepts it.
+- `a11y.find_elements` returns logical window-relative extents, and the
+  server adds the client's logical origin. Chromium can mix logical Views
+  controls with physical-pixel web controls in one tree. The reader
+  compares a web document's bounds with its native container, checks that
+  both dimensions imply the same scale, and converts only that document's
+  subtree. Nested documents inherit the conversion. Already-logical web
+  bounds and other toolkits keep their units.
 - `screenshot` captures *pixels* and returns `geometry` + `scale` per
   capture so callers map back: `global = origin + pixel / scale`.
 
