@@ -6,18 +6,21 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.15.1] - 2026-11-15
+
 ### Fixed
 
 - `ui`, `click_ui` and `marks` map Chromium web controls to logical
-  coordinates on scaled displays. Chromium can report page controls in
-  physical pixels while its browser controls are already logical; only
-  the web subtree is converted, using its native container's geometry.
+  coordinates on scaled displays (#10, thanks @Connorbelez). Chromium can
+  report page controls in physical pixels while its browser controls are
+  already logical; only the web subtree is converted, using its native
+  container's geometry.
 
 ### Changed
 
 - Accessibility form reads batch editable-state queries for text fields,
-  removing a separate D-Bus round trip per field. Password contents remain
-  excluded from value reads.
+  removing a separate D-Bus round trip per field (#10). Password contents
+  remain excluded from value reads.
 
 ## [0.15.0] - 2026-11-10
 
