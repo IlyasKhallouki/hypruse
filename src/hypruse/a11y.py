@@ -839,6 +839,10 @@ def find_elements(
                 field = _element(bus, fs, fp, _role_num(bus, fs, fp), nm, actionable=True)
                 if field is not None:
                     seen.add((fs, fp))
+                    if node in transforms:
+                        # a label and its field share a document, and the
+                        # walk may stop before it reaches the field
+                        transforms.setdefault((fs, fp), transforms[node])
                     results.append(field)
             if actionable:
                 continue  # the label itself is not something to click
@@ -868,10 +872,7 @@ def find_elements(
     flush()
     results = results or fallback
     for item in results:
-        node = (item["svc"], item["path"])
-        # A label relation can return a sibling field before the walk gets
-        # to it, including the last result before the cap stops traversal.
-        transform = transforms.get(node) or transforms.get(walk.parents.get(node))
+        transform = transforms.get((item["svc"], item["path"]))
         if transform is not None:
             px, py, lx, ly, sx, sy = transform
             x, y, w, h = item["extent"]

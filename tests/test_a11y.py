@@ -1066,6 +1066,21 @@ def test_a_label_found_field_is_converted_even_when_the_result_cap_stops_the_wal
     assert len(elements) == 1 and elements[0]["extent"] == (60, 120, 100, 40)
 
 
+def test_a_label_found_field_in_another_container_is_converted_when_the_cap_stops_the_walk():
+    # <div><label for=f>Save</label></div><div><input id=f></div>: the walk
+    # stops at the cap before it reaches the field's own container
+    nodes = _chromium_tree()
+    field, label = ("app", "/button"), ("app", "/label")
+    nodes[field].update(role=79, name="", states=ALL_STATES | {7})
+    nodes[("app", "/doc")]["children"] = [("app", "/d1"), ("app", "/d2")]
+    nodes[("app", "/d1")] = {"role": 39, "name": "", "children": [label]}
+    nodes[("app", "/d2")] = {"role": 39, "name": "", "children": [field]}
+    nodes[label] = {"role": 29, "name": "Save", "children": [], "relations": [(1, [field])]}
+    elements, _ = a11y.find_elements(FakeBus(nodes, toolkits={"app": "Chromium"}),
+                                     "app", "/root", name="Save", max_results=1)
+    assert len(elements) == 1 and elements[0]["extent"] == (60, 120, 100, 40)
+
+
 @pytest.mark.parametrize("toolkit", ["GTK", "Qt", "", "Chromium"])
 def test_unproven_document_scaling_is_left_alone(toolkit):
     nodes = _chromium_tree()
