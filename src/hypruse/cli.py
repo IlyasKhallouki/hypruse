@@ -119,13 +119,25 @@ def _check_pointer() -> tuple[bool, str]:
 
 
 def _check_screenshot() -> tuple[bool, str]:
-    from hypruse import screenshot
+    """A tiny capture at the focused monitor's top-left corner. Not at
+    (0,0): a layout may leave the global origin inside no monitor (a
+    laptop panel kept at x=-1920), and grim refuses a region that touches
+    no output (#12)."""
+    from hypruse import hyprctl, screenshot
 
     try:
-        data, _meta = screenshot.capture(region="0,0,8x8")
+        monitors = hyprctl.query("monitors") or []
+    except hyprctl.HyprctlError as exc:
+        return False, str(exc)
+    if not monitors:
+        return False, "Hyprland reports no active monitor to capture"
+    m = next((m for m in monitors if m.get("focused")), monitors[0])
+    x, y, _w, _h = hyprctl.logical_rect(m)
+    try:
+        data, _meta = screenshot.capture(region=f"{x},{y},8x8")
     except screenshot.ScreenshotError as exc:
         return False, str(exc)
-    return True, f"grim capture ok ({len(data)} bytes)"
+    return True, f"grim capture ok on {m.get('name', 'the focused monitor')} ({len(data)} bytes)"
 
 
 def _window_capture_note() -> tuple[bool, str]:

@@ -18,6 +18,9 @@ All notable changes to this project are documented here. The format follows
   says it may still be closing or asking to save, and to read `desktop`
   before closing it again, since a reused address can name another window
   (#11). It used to say only that the window might be prompting to save.
+- `doctor`'s screenshot check no longer fails when no monitor covers (0,0),
+  as with a laptop panel kept at x=-1920 (#12, reported by @iolo53435343).
+  It probes the focused monitor's top-left corner instead.
 
 ## [0.15.1] - 2026-11-15
 

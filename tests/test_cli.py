@@ -301,6 +301,51 @@ def test_doctor_needs_window_ids_from_hyprland_too(monkeypatch):
     assert ok is True and "0.54" in detail and "crop the screen" in detail
 
 
+@pytest.fixture
+def probe(monkeypatch):
+    """The doctor's screenshot check against fake monitors, recording the
+    region it asks grim for."""
+    from hypruse import screenshot
+
+    asked = []
+    monkeypatch.setattr(screenshot, "capture",
+                        lambda region="", **k: asked.append(region) or (b"x" * 64, {}))
+
+    def with_monitors(monitors):
+        monkeypatch.setattr(hyprctl_mod, "query", lambda what: monitors)
+        return cli._check_screenshot()
+
+    return asked, with_monitors
+
+
+def test_doctor_probes_inside_a_monitor_that_does_not_cover_the_origin(probe):
+    # a laptop panel kept at x=-1920 leaves (0,0) inside no output, and grim
+    # refuses a region there (#12); the probe sits on the monitor instead
+    asked, with_monitors = probe
+    ok, detail = with_monitors([{"name": "eDP-1", "x": -1920, "y": 0, "width": 1920,
+                                 "height": 1080, "scale": 1, "transform": 0,
+                                 "focused": True}])
+    assert ok is True and "eDP-1" in detail
+    assert asked == ["-1920,0,8x8"]
+
+
+def test_doctor_probes_the_focused_monitor(probe):
+    asked, with_monitors = probe
+    with_monitors([
+        {"name": "DP-1", "x": 0, "y": 0, "width": 2560, "height": 1440, "scale": 1},
+        {"name": "eDP-1", "x": 2560, "y": 200, "width": 2880, "height": 1800,
+         "scale": 2, "focused": True},
+    ])
+    assert asked == ["2560,200,8x8"]
+
+
+def test_doctor_says_so_when_there_is_no_monitor_to_capture(probe):
+    asked, with_monitors = probe
+    ok, detail = with_monitors([])
+    assert ok is False and "no active monitor" in detail
+    assert asked == []
+
+
 def test_doctor_does_not_vouch_for_window_ids_it_could_not_see(monkeypatch):
     class Done:
         stdout, stderr = "  -T <identifier> Set the identifier", ""
