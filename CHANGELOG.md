@@ -6,6 +6,8 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.15.2] - 2026-11-24
+
 ### Fixed
 
 - `hypr` refuses an address that names no open window, in a dry run too
