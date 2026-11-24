@@ -2,7 +2,20 @@
 the app), so the tool must wait for the compositor's word before the
 `then` observation, or that observation still lists the closed window."""
 
+import pytest
+
 from hypruse import server as srv
+
+DEAD = {"address": "0xdead", "class": "kitty", "title": "shell", "pid": 7,
+        "at": [0, 0], "size": [800, 600], "mapped": True,
+        "workspace": {"id": 1, "name": "1"}}
+
+
+@pytest.fixture(autouse=True)
+def the_window_exists(monkeypatch):
+    """hypr looks its target up before acting (#11), so the window these
+    tests close is on the desktop."""
+    monkeypatch.setattr(srv.hyprctl, "query", lambda cmd: [DEAD] if cmd == "clients" else {})
 
 
 class FakeStream:
@@ -70,6 +83,9 @@ def test_close_window_reports_a_window_that_would_not_close(monkeypatch):
     _wired(monkeypatch, order, hit=None)  # no closewindow within the bound
     out = srv.hypr("close_window", target="0xdead")
     assert "still open" in out and "0xdead" in out
+    # it was open when the wait ended, which is not a reason to close it
+    # again: the line sends the agent to look before it retries (#11)
+    assert "may still be closing" in out and "desktop()" in out
 
 
 def test_close_window_without_socket_fires_and_forgets(monkeypatch):

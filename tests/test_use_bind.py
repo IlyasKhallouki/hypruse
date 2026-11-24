@@ -96,8 +96,8 @@ def test_use_bind_refused_under_confinement(fake_binds, monkeypatch):
 
 
 def test_hypr_focus_window_refused_out_of_scope(monkeypatch):
-    # integration: hypr's guard_window(target) call site is real; focusing
-    # an out-of-scope window by address is refused before dispatch
+    # integration: hypr's own lookup and confinement check are real;
+    # focusing an out-of-scope window by address is refused before dispatch
     monkeypatch.setenv("HYPRUSE_CONFINE", "class:kitty")
     monkeypatch.setattr(server.safety, "touch", lambda *a: None)
     firefox = {"address": "0xff", "class": "firefox", "workspace": {"id": 1},

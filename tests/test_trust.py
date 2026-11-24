@@ -30,7 +30,6 @@ def client(addr="0xa", cls="kitty", ws=1):
 def test_no_confine_allows_everything(monkeypatch):
     monkeypatch.setattr(trust.hyprctl, "query", lambda cmd: [client()])
     trust.guard_client(client(cls="anything"))  # no raise
-    trust.guard_window("0xa")
 
 
 def test_confine_launched_only_owned(monkeypatch):

@@ -179,12 +179,6 @@ def _describe(scope: tuple[str, Any]) -> str:
     return "windows hypruse launched" if kind == "launched" else f"{kind} in {list(vals)}"
 
 
-def _client(address: str) -> dict[str, Any] | None:
-    return next(
-        (c for c in hyprctl.query("clients") if c.get("address") == address), None
-    )
-
-
 def guards_window_input() -> bool:
     """Whether any active guard needs the target window resolved before a
     keyboard action (so the tool only pays for the hyprctl query when a
@@ -203,18 +197,6 @@ def guard_client(client: dict[str, Any]) -> None:
             f"{client.get('address', '?')} ({client.get('class', '?')}) is outside "
             f"the agent's confinement scope ({_describe(scope)})"
         )
-
-
-def guard_window(address: str) -> None:
-    """Refuse if `address` is outside the confinement scope, resolving it
-    first. For callers (hypr) that hold only an address."""
-    scope = _confine_scope()
-    if scope is None:
-        return
-    client = _client(address)
-    if client is None:
-        raise TrustError(f"window {address} not found; call desktop() for current addresses")
-    guard_client(client)
 
 
 def guard_use_bind() -> None:

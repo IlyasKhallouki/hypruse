@@ -466,7 +466,10 @@ def test_dispatch_strips_then(monkeypatch):
 def test_expected_signatures_mapping():
     exp = srv._step_expected_signatures
     assert exp({"op": "hypr", "action": "workspace", "workspace": "3"}) == {"workspace:3"}
-    assert exp({"op": "hypr", "action": "move_window", "target": "0xA"}) == {"movewindow:0xA"}
+    # hypr acts on the lowercase address, and that is what Hyprland reports
+    assert exp({"op": "hypr", "action": "move_window", "target": "0xA"}) == {"movewindow:0xa"}
+    assert exp({"op": "hypr", "action": "close_window", "target": "0xB"}) == {"closewindow:0xb"}
+    assert srv._event_signature("movewindow", {"address": "0xA"}) == "movewindow:0xa"
     assert exp({"op": "pointer", "action": "click"}) == set()
     assert srv._step_wait_names({"op": "wait_for", "event": "window_open"}) == {"openwindow"}
     assert srv._step_wait_names({"op": "pointer"}) == set()

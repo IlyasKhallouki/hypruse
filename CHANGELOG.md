@@ -6,6 +6,19 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Fixed
+
+- `hypr` refuses an address that names no open window, in a dry run too
+  (#11, reported by @Corythebeast7). Hyprland answers "ok" when an address
+  matches nothing, so `move_window`, `toggle_floating` and `close_window`
+  on a closed window did nothing and reported success. `hypr` also sends
+  addresses in lowercase, the only form Hyprland matches, so an address
+  written in uppercase reaches its window instead of matching nothing.
+- When a window is still open after `close_window`'s 1 s wait, the message
+  says it may still be closing or asking to save, and to read `desktop`
+  before closing it again, since a reused address can name another window
+  (#11). It used to say only that the window might be prompting to save.
+
 ## [0.15.1] - 2026-11-15
 
 ### Fixed

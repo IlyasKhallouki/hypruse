@@ -120,6 +120,9 @@ def test_hypr_targetless_fullscreen_honors_seat_guard(monkeypatch):
         srv.hypr("fullscreen")  # no target -> guarded
     # an address-targeted action names its window, so it is not seat-gated
     srv.trust._seat.update(cursor=(1, 1), active="0xa")
+    named = {"address": "0xabc", "class": "kitty", "workspace": {"id": 1}}
+    monkeypatch.setattr(srv.hyprctl, "query",
+                        lambda cmd: [named] if cmd == "clients" else {"address": "0xb"})
     assert srv.hypr("fullscreen", target="0xabc") == "fullscreen toggled"
 
 

@@ -495,11 +495,19 @@ fullscreen toggled
 floating toggled
 ```
 
-`close_window` waits up to 1 s for the compositor to confirm; an app that
-prompts instead says so:
+An `ADDR` that names no open window is refused with exit 1, in a dry run too:
 
 ```
-asked 0x55a4479a1200 to close, but it is still open after 1s (it may be prompting to save)
+hypruse: error: window '0x55a4479a1200' not found, call desktop() for current addresses
+```
+
+`close_window` waits up to 1 s for the compositor to confirm. A window still
+open by then may be slow to close or asking to save, so read `desktop`
+before closing it again. Addresses get reused, and a second close can hit
+another window:
+
+```
+asked 0x55a4479a1200 to close; it was still open 1s later. It may still be closing, or be asking to save. Read desktop() before closing it again: addresses get reused, so a stale one can name another window
 ```
 
 Exit codes: 0, 1, 2, 3.

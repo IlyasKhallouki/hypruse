@@ -1515,9 +1515,14 @@ def _close_and_confirm(target: str) -> str:
             # turn a (probably successful) close into a tool error
             return f"asked {target} to close (event socket dropped before confirming)"
     if hit is None:
+        # a fact about the moment the wait ended, not a settled state: slow
+        # apps (browsers, Electron) often close a moment later, and a blind
+        # retry by address can close another window that reused it (#11)
         return (
-            f"asked {target} to close, but it is still open after "
-            f"{_CLOSE_WAIT_S:.0f}s (it may be prompting to save)"
+            f"asked {target} to close; it was still open {_CLOSE_WAIT_S:.0f}s later. "
+            "It may still be closing, or be asking to save. Read desktop() before "
+            "closing it again: addresses get reused, so a stale one can name "
+            "another window"
         )
     return f"closed {target}"
 
@@ -1569,7 +1574,7 @@ def hypr(action: str, target: str = "", workspace: str = "", then: str = "none")
     if action in ("focus_window", "move_window", "close_window") or (
         target and action in ("fullscreen", "toggle_floating")
     ):
-        _addr(target)  # the branches below re-derive it; this is the check
+        _addr(target)  # the shape; that the window exists is checked below
     if bg.mode() == bg.GUARANTEE:
         # what changes the human's view; the rest is confined to the agent's
         # windows by the guarantee's scope
@@ -1590,7 +1595,13 @@ def hypr(action: str, target: str = "", workspace: str = "", then: str = "none")
     # refocused). Address-targeted actions name their window, so they skip
     # the seat guard to avoid false refusals.
     if target and action != "workspace":
-        trust.guard_window(target)
+        # Hyprland matches an address as an exact lowercase string and
+        # answers "ok" when it matches no window: float, move and close then
+        # do nothing, and this tool would report that they happened (#11).
+        # So the window is looked up here, by the name Hyprland gives it,
+        # and above the dry-run return so a rehearsal refuses it too.
+        target = target.lower()
+        trust.guard_client(_resolve_window(target))
     elif not target and action in ("fullscreen", "toggle_floating"):
         trust.guard_seat()
         active = _active_client()
@@ -2160,7 +2171,7 @@ def _event_signature(name: str, payload: dict[str, Any]) -> str:
     if name == "workspace":
         return f"workspace:{payload.get('name', '')}"
     if name in ("openwindow", "closewindow", "movewindow"):
-        return f"{name}:{payload.get('address', '')}"
+        return f"{name}:{str(payload.get('address', '')).lower()}"
     if name in ("openlayer", "closelayer"):
         return f"{name}:{payload.get('namespace', '')}"
     return name
@@ -2174,10 +2185,11 @@ def _step_expected_signatures(step: dict[str, Any]) -> set[str]:
     action = step.get("action", "")
     if action == "workspace":
         return {f"workspace:{step.get('workspace', '')}"}
+    # hypr acts on the lowercase address, so that is what the event names
     if action == "move_window":
-        return {f"movewindow:{step.get('target', '')}"}
+        return {f"movewindow:{str(step.get('target', '')).lower()}"}
     if action == "close_window":
-        return {f"closewindow:{step.get('target', '')}"}
+        return {f"closewindow:{str(step.get('target', '')).lower()}"}
     return set()  # focus_window/fullscreen/floating cause only unwatched focus churn
 
 
